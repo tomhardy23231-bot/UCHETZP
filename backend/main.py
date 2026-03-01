@@ -3,12 +3,12 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timedelta
 import jwt
 from pydantic import BaseModel
@@ -19,10 +19,11 @@ import models
 import schemas
 import crud
 
-# Настройки JWT
+# Настройки безопасности
 SECRET_KEY = "SECRET_FOR_UC_HET_ZP_SYSTEM" # В продакшене вынести в .env
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 неделя
+SCANNER_API_KEY = "SCANNER_HARDWARE_KEY_2026" # Ключ для физического сканера
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
 
@@ -82,7 +83,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 async def get_current_active_user(current_user: models.User = Depends(get_current_user)):
     # Проверка подписки (для админа не проверяем)
     if current_user.role != models.UserRole.ADMIN:
-        # Убеждаемся, что время с таймзоной для корректного сравнения
         now = datetime.now(current_user.subscription_until.tzinfo)
         if current_user.subscription_until < now:
             raise HTTPException(
@@ -98,6 +98,15 @@ async def get_admin_user(current_user: models.User = Depends(get_current_active_
             detail="Operation not permitted"
         )
     return current_user
+
+# Проверка API ключа для сканера
+async def verify_scanner_key(x_api_key: Optional[str] = Header(None)):
+    if x_api_key != SCANNER_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Scanner API Key"
+        )
+    return x_api_key
 
 
 # ========== BOOTSTRAP ADMIN ==========
@@ -247,6 +256,15 @@ def get_attendance_journal(start_date: str = None, end_date: str = None, db: Ses
         })
     return result
 
+@app.get("/api/attendance/latest", response_model=schemas.LatestAttendanceResponse)
+def get_latest_attendance(user: models.User = Depends(get_current_active_user)):
+    global latest_scanned_card
+    if not latest_scanned_card:
+        raise HTTPException(status_code=404, detail="Свежих сканирований не найдено")
+    card_id = latest_scanned_card
+    latest_scanned_card = None
+    return {"card_id": card_id}
+
 @app.put("/api/attendance/{attendance_id}")
 def update_attendance_record(attendance_id: int, attendance_update: schemas.AttendanceUpdate, db: Session = Depends(database.get_db), user: models.User = Depends(get_admin_user)):
     attendance = crud.update_attendance(db, attendance_id, attendance_update)
@@ -266,10 +284,10 @@ def create_attendance_record(attendance: schemas.AttendanceCreate, db: Session =
     return crud.create_attendance(db=db, attendance=attendance)
 
 
-# ========== ЭНДПОИНТЫ ДЛЯ ПОСЕЩАЕМОСТИ (СКАНЕР) - БЕЗ AUTH (ДЛЯ СКАНИРОВАНИЯ) ==========
+# ========== ЭНДПОИНТЫ ДЛЯ ПОСЕЩАЕМОСТИ (СКАНЕР) - ЗАЩИТА X-API-KEY ==========
 
 @app.post("/api/attendance/scan", status_code=status.HTTP_200_OK)
-def scan_card_for_attendance(request: schemas.CardScanRequest, db: Session = Depends(database.get_db)):
+def scan_card_for_attendance(request: schemas.CardScanRequest, db: Session = Depends(database.get_db), api_key: str = Depends(verify_scanner_key)):
     global latest_scanned_card
     card_id = request.card_id
     employee = crud.get_employee_by_card(db, card_id)
@@ -299,6 +317,22 @@ def scan_card_for_attendance(request: schemas.CardScanRequest, db: Session = Dep
         attendance_record.out_time = now
         db.commit()
         return {"status": "re_checked_out", "employee_name": employee.name, "time": now}
+
+@app.post("/api/attendance/bulk-scan", status_code=status.HTTP_200_OK)
+def bulk_scan_cards_for_attendance(request: schemas.BulkScanRequest, db: Session = Depends(database.get_db), api_key: str = Depends(verify_scanner_key)):
+    results = []
+    processed_count = 0
+    errors_count = 0
+    sorted_scans = sorted(request.scans, key=lambda x: x.timestamp if x.timestamp else datetime.min)
+    for scan in sorted_scans:
+        try:
+            res = scan_card_for_attendance(scan, db, api_key)
+            results.append({"card_id": scan.card_id, "status": res.get("status")})
+            processed_count += 1
+        except Exception as e:
+            results.append({"card_id": scan.card_id, "error": str(e)})
+            errors_count += 1
+    return {"processed": processed_count, "errors": errors_count, "details": results}
 
 
 # ========== ЭНДПОИНТЫ ДЛЯ РАСЧЁТА ЗАРПЛАТЫ (ЗАЩИЩЕННЫЕ) ==========
