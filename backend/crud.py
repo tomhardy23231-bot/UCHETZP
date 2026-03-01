@@ -136,6 +136,20 @@ def delete_attendance(db: Session, attendance_id: int) -> bool:
     return False
 
 
+def get_latest_attendance_scan(db: Session, minutes: int = 2) -> Optional[models.Attendance]:
+    """
+    Получить самую последнюю запись посещаемости (скан),
+    созданную в течение последних `minutes` минут.
+    """
+    time_threshold = datetime.now() - timedelta(minutes=minutes)
+    
+    # Ищем самую последнюю запись по времени прихода (in_time)
+    # in_time в БД обычно naive datetime (в локальном времени или UTC)
+    return db.query(models.Attendance).filter(
+        models.Attendance.in_time >= time_threshold
+    ).order_by(models.Attendance.in_time.desc()).first()
+
+
 # ========== CRUD ДЛЯ ФИНАНСОВЫХ ТРАНЗАКЦИЙ ==========
 
 def get_transactions_by_employee_and_month(

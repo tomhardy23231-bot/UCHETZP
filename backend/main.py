@@ -157,12 +157,30 @@ def get_attendance_journal(
         result.append({
             "id": record.id,
             "date": record.date,
-            "employee_name": record.employee.name,
+            "employee_name": record.employee.name if record.employee else "Неизвестная карта",
             "in_time": in_time_str,
             "out_time": out_time_str,
             "total_hours": total_hours
         })
     return result
+
+
+@app.get("/api/attendance/latest", response_model=schemas.LatestAttendanceResponse)
+def get_latest_attendance(db: Session = Depends(database.get_db)):
+    """
+    Получить самый свежий скан (за последние 2 минуты) для режима ввода новых карт.
+    """
+    record = crud.get_latest_attendance_scan(db, minutes=2)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Свежих сканирований не найдено"
+        )
+    
+    return {
+        "id": record.id,
+        "card_id": record.card_id
+    }
 
 
 @app.put("/api/attendance/{attendance_id}")
@@ -209,12 +227,6 @@ def scan_card_for_attendance(
     card_id = request.card_id
     employee = crud.get_employee_by_card(db, card_id)
 
-    if not employee:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Сотрудник с картой ID {card_id} не найден"
-        )
-
     # Используем переданное время или текущее
     now = request.timestamp if request.timestamp else datetime.now()
     
@@ -224,18 +236,32 @@ def scan_card_for_attendance(
         
     today_str = now.strftime("%Y-%m-%d")
 
+    if not employee:
+        # Для режима ввода новых карт: сохраняем скан даже без сотрудника
+        new_attendance = models.Attendance(
+            employee_id=None,
+            card_id=card_id,
+            date=today_str,
+            in_time=now
+        )
+        db.add(new_attendance)
+        db.commit()
+        return {"status": "unknown_card", "card_id": card_id, "time": now}
+
     # Ищем существующую запись за дату сканирования
     attendance_record = crud.get_attendance_by_employee_and_date(db, employee.id, today_str)
 
     if not attendance_record:
         # Сценарий A: Приход (первое сканирование за день)
-        new_attendance = schemas.AttendanceCreate(
+        new_attendance = models.Attendance(
             employee_id=employee.id,
+            card_id=card_id,
             date=today_str,
             in_time=now,
             out_time=None
         )
-        created_record = crud.create_attendance(db, new_attendance)
+        db.add(new_attendance)
+        db.commit()
         return {"status": "checked_in", "employee_name": employee.name, "time": now}
 
     # Если запись есть, проверяем уход
@@ -248,6 +274,7 @@ def scan_card_for_attendance(
             return {"status": "debounced", "reason": "scanned too soon after check-in"}
         
         attendance_record.out_time = now
+        attendance_record.card_id = card_id # Обновляем card_id на всякий случай
         db.commit()
         db.refresh(attendance_record)
         return {"status": "checked_out", "employee_name": employee.name, "time": now}
@@ -259,6 +286,7 @@ def scan_card_for_attendance(
             return {"status": "debounced", "reason": "scanned too soon after previous check-out"}
 
         attendance_record.out_time = now
+        attendance_record.card_id = card_id
         db.commit()
         db.refresh(attendance_record)
         return {"status": "re_checked_out", "employee_name": employee.name, "time": now}

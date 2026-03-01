@@ -1,7 +1,7 @@
 // pages/Employees.jsx - Modern Soft UI Employees Management
-import React, { useState, useEffect, useCallback } from 'react';
-import { UserPlus, Edit2, Trash2, X, CreditCard, Search, UserRound, Briefcase, Phone, DollarSign, Target, UserRoundCheck, AlertTriangle, UserRoundX } from 'lucide-react';
-import { getEmployees, createEmployee, updateEmployee, deleteEmployee } from '../api/client';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { UserPlus, Edit2, Trash2, X, CreditCard, Search, UserRound, Briefcase, Phone, DollarSign, Target, Loader2, Signal } from 'lucide-react';
+import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getLatestAttendance, deleteAttendance } from '../api/client';
 
 const Employees = () => {
   const [employees, setEmployees] = useState([]);
@@ -19,6 +19,11 @@ const Employees = () => {
   const [rate, setRate] = useState('');
   const [pointVal, setPointVal] = useState('');
   const [cardId, setCardId] = useState('');
+  
+  // Card Input Mode state
+  const [isPolling, setIsPolling] = useState(false);
+  const [tempScanId, setTempScanId] = useState(null);
+  const pollingRef = useRef(null);
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
@@ -36,6 +41,40 @@ const Employees = () => {
     loadEmployees();
   }, [loadEmployees]);
 
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+    setIsPolling(false);
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (isPolling) {
+      stopPolling();
+      return;
+    }
+
+    setIsPolling(true);
+    setTempScanId(null);
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const data = await getLatestAttendance();
+        if (data && data.card_id) {
+          setCardId(data.card_id);
+          setTempScanId(data.id);
+          stopPolling();
+        }
+      } catch (error) {
+        // Игнорируем 404 ошибки опроса
+        if (error.response?.status !== 404) {
+          console.error('Ошибка опроса карт:', error);
+        }
+      }
+    }, 2000);
+  }, [isPolling, stopPolling]);
+
   const openAddModal = useCallback(() => {
     setEditingEmployee(null);
     setName('');
@@ -45,6 +84,7 @@ const Employees = () => {
     setRate('');
     setPointVal('');
     setCardId('');
+    setTempScanId(null);
     setShowModal(true);
   }, []);
 
@@ -57,13 +97,15 @@ const Employees = () => {
     setRate(employee.rate.toString());
     setPointVal(employee.point_val.toString());
     setCardId(employee.card_id || '');
+    setTempScanId(null);
     setShowModal(true);
   }, []);
 
   const closeModal = useCallback(() => {
+    stopPolling();
     setShowModal(false);
     setEditingEmployee(null);
-  }, []);
+  }, [stopPolling]);
 
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
@@ -83,12 +125,22 @@ const Employees = () => {
       } else {
         await createEmployee(data);
       }
+
+      // Если мы получили ID карты через режим ввода, удаляем этот временный скан
+      if (tempScanId) {
+        try {
+          await deleteAttendance(tempScanId);
+        } catch (err) {
+          console.error('Ошибка удаления временного скана:', err);
+        }
+      }
+
       await loadEmployees();
       closeModal();
     } catch (error) {
       alert('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
-  }, [name, position, phone, bankAcc, rate, pointVal, cardId, editingEmployee, loadEmployees, closeModal]);
+  }, [name, position, phone, bankAcc, rate, pointVal, cardId, editingEmployee, tempScanId, loadEmployees, closeModal]);
 
   const handleDelete = useCallback(async (id) => {
     if (confirm('Удалить сотрудника? Все связанные данные также будут удалены.')) {
@@ -426,17 +478,54 @@ const Employees = () => {
 
                 {/* Card ID */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-1.5">
-                    <CreditCard size={16} className="text-slate-500" />
-                    Номер карты
+                  <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <CreditCard size={16} className="text-slate-500" />
+                      Номер карты
+                    </span>
+                    <button
+                      type="button"
+                      onClick={startPolling}
+                      className={`text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-md transition-all flex items-center gap-1 ${
+                        isPolling 
+                        ? 'bg-amber-100 text-amber-600 animate-pulse' 
+                        : 'bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-600'
+                      }`}
+                    >
+                      {isPolling ? (
+                        <>
+                          <Loader2 size={10} className="animate-spin" />
+                          Ожидание...
+                        </>
+                      ) : (
+                        <>
+                          <Signal size={10} />
+                          Режим ввода
+                        </>
+                      )}
+                    </button>
                   </label>
-                  <input
-                    type="text"
-                    value={cardId}
-                    onChange={(e) => setCardId(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-soft focus:shadow-soft-lg transition-soft"
-                    placeholder="ID карты доступа"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={cardId}
+                      onChange={(e) => setCardId(e.target.value)}
+                      className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-soft focus:shadow-soft-lg transition-soft ${
+                        isPolling ? 'border-amber-300 bg-amber-50/30' : 'border-slate-200'
+                      }`}
+                      placeholder={isPolling ? "Поднесите карту к сканеру..." : "ID карты доступа"}
+                      readOnly={isPolling}
+                    />
+                    {isPolling && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <div className="flex gap-1">
+                          <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                          <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                          <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce"></span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Rate */}

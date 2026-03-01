@@ -168,3 +168,9 @@ class CardScanRequest(BaseModel):
 class BulkScanRequest(BaseModel):
     """Схема для массовой загрузки офлайн-сканов."""
     scans: List[CardScanRequest]
+
+
+class LatestAttendanceResponse(BaseModel):
+    """Схема ответа для последнего скана (режим ввода карт)."""
+    id: int
+    card_id: str

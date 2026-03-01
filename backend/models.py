@@ -38,7 +38,8 @@ class Attendance(Base):
     __tablename__ = "attendance"
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    card_id = Column(String, nullable=True) # Добавляем card_id для неизвестных карт
     date = Column(String, nullable=False, index=True)  # Дата в формате YYYY-MM-DD
     in_time = Column(DateTime, nullable=False)  # Время прихода
     out_time = Column(DateTime, nullable=True)  # Время ухода (может быть пустым)

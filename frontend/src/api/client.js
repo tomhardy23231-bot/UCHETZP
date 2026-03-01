@@ -69,6 +69,11 @@ export const deleteAttendance = async (id) => {
   return response.data;
 };
 
+export const getLatestAttendance = async () => {
+  const response = await api.get('/api/attendance/latest');
+  return response.data;
+};
+
 export const createAttendance = async (attendance) => {
   const response = await api.post('/api/attendance', attendance);
   return response.data;
