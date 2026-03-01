@@ -159,4 +159,24 @@ export const deleteTransaction = async (id) => {
   return response.data;
 };
 
+// ========== СМАРТ-НАСТРОЙКА ==========
+
+export const adjustHours = async (employeeId, month, targetHours) => {
+  const response = await api.post('/api/payroll/adjust-hours', {
+    employee_id: employeeId,
+    month: month,
+    target_total_hours: targetHours
+  });
+  return response.data;
+};
+
+export const adjustPoints = async (employeeId, month, targetPoints) => {
+  const response = await api.post('/api/payroll/adjust-points', {
+    employee_id: employeeId,
+    month: month,
+    target_points: targetPoints
+  });
+  return response.data;
+};
+
 export default api;
