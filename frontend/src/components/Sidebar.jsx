@@ -1,13 +1,11 @@
 // components/Sidebar.jsx - Modern Soft UI Sidebar
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, LayoutDashboard, BookUser, Users, Calculator, ChevronLeft, ChevronRight, Building2, LogOut, Shield } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { Menu, X, LayoutDashboard, BookUser, Users, Calculator, ChevronLeft, ChevronRight, Building2, LogOut } from 'lucide-react';
 
 const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
-  const { user, logout } = useAuth();
 
   const menuItems = [
     { path: '/', icon: LayoutDashboard, label: 'Дашборд' },
@@ -15,10 +13,6 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
     { path: '/employees', icon: Users, label: 'Сотрудники' },
     { path: '/payroll', icon: Calculator, label: 'Зарплата' },
   ];
-
-  if (user?.role === 'admin') {
-    menuItems.push({ path: '/admin', icon: Shield, label: 'Админ' });
-  }
 
   const isActive = (path) => location.pathname === path;
 
@@ -118,7 +112,6 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
           {/* Logout Button */}
           <div className="p-2">
             <button
-              onClick={logout}
               className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-slate-500 hover:bg-red-50 hover:text-red-600 rounded-xl transition-soft shadow-soft hover:shadow-soft-lg"
             >
               <LogOut size={18} />
