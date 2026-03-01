@@ -1,28 +1,27 @@
-# database.py - Конфигурация базы данных SQLite
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-# Получаем URL базы данных из переменной окружения или используем SQLite по умолчанию
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./payroll.db")
+# Получаем URL базы данных из переменной окружения
+database_url = os.getenv("DATABASE_URL")
 
-# Параметры подключения: для SQLite нужен check_same_thread=False
-connect_args = {}
-if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+# Если переменная DATABASE_URL не задана, вызываем ошибку
+if not database_url:
+    raise ValueError("DATABASE_URL environment variable is not set")
 
-# Создаём движок базы данных
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args=connect_args
-)
+# Исправляем устаревшую схему 'postgres://' на 'postgresql://' для совместимости со SQLAlchemy >= 1.4
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+# Создаём движок SQLAlchemy для PostgreSQL (без параметров SQLite)
+engine = create_engine(database_url)
 
 # Создаём сессию для работы с БД
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Базовый класс для моделей
 Base = declarative_base()
-
 
 # Зависимость для получения сессии БД в эндпоинтах
 def get_db():
