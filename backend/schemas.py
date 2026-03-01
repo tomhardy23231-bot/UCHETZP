@@ -1,7 +1,7 @@
 # schemas.py - Pydantic схемы для валидации данных
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from models import TransactionType
 
 
