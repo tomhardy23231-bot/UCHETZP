@@ -141,3 +141,22 @@ textarea:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Toast Animations */
+@keyframes enter {
+  0% { transform: scale(0.9); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes leave {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0; }
+}
+
+.animate-enter {
+  animation: enter 0.2s ease-out forwards;
+}
+
+.animate-leave {
+  animation: leave 0.15s ease-in forwards;
+}

@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Journal from './pages/Journal';
 import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
+import NotificationManager from './components/NotificationManager';
 
 function App() {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -13,6 +14,7 @@ function App() {
   return (
     <Router>
       <div className="flex min-h-screen bg-gray-100">
+        <NotificationManager />
         {/* Боковая панель */}
         <Sidebar isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
 

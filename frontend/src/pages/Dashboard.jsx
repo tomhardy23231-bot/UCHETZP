@@ -20,8 +20,8 @@ const Dashboard = () => {
 
   useEffect(() => {
     loadAttendance();
-    // Refresh data every 30 seconds
-    const interval = setInterval(loadAttendance, 30000);
+    // Refresh data every 3 seconds for near real-time updates
+    const interval = setInterval(loadAttendance, 3000);
     return () => clearInterval(interval);
   }, [loadAttendance]);
 

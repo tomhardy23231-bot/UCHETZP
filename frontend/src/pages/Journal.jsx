@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTtlLocalStorage } from '../hooks/useTtlLocalStorage';
 import { Calendar, Clock, UserCheck, UserX, AlertTriangle, Info, UserRound, Briefcase, UserRoundCheck, UserRoundX, ChevronLeft, ChevronRight, LayoutGrid, List } from 'lucide-react';
-import { getEmployees, getAttendanceJournal, updateAttendance, createAttendance } from '../api/client';
+import { getEmployees, getAttendanceJournal, updateAttendance, createAttendance, deleteAttendance } from '../api/client';
 import GridView from '../components/GridView';
 import TableView from '../components/TableView';
 import EmployeeCard from '../components/EmployeeCard';
@@ -36,10 +36,10 @@ const Journal = () => {
   }, []);
 
   // Load attendance data for selected month
-  const loadAttendance = useCallback(async () => {
+  const loadAttendance = useCallback(async (isPolling = false) => {
     if (!selectedMonth) return;
 
-    setLoading(true);
+    if (!isPolling) setLoading(true);
     try {
       const [year, month] = selectedMonth.split('-');
       const startDate = `${year}-${month}-01`;
@@ -58,7 +58,7 @@ const Journal = () => {
     } catch (error) {
       console.error('Ошибка загрузки журнала:', error);
     } finally {
-      setLoading(false);
+      if (!isPolling) setLoading(false);
     }
   }, [selectedMonth]);
 
@@ -68,6 +68,9 @@ const Journal = () => {
 
   useEffect(() => {
     loadAttendance();
+    // 3-second polling for real-time updates
+    const interval = setInterval(() => loadAttendance(true), 3000);
+    return () => clearInterval(interval);
   }, [loadAttendance]);
 
   // Get all days in month
@@ -143,7 +146,12 @@ const Journal = () => {
       const outTimeISO = currentOutTime ? `${dateStr}T${currentOutTime}:00` : null;
 
       if (existingRecord) {
-        await updateAttendance(existingRecord.id, inTimeISO, outTimeISO);
+        // If both fields are empty, physically delete the record
+        if (!currentInTime && !currentOutTime) {
+          await deleteAttendance(existingRecord.id);
+        } else {
+          await updateAttendance(existingRecord.id, inTimeISO, outTimeISO);
+        }
       } else if (inTimeISO || outTimeISO) {
         await createAttendance({
           employee_id: employee.id,
