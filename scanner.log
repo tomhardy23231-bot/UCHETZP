@@ -1,0 +1,52 @@
+2026-02-20 22:04:26,760 - INFO - Демон сканера запущен. Ожидание ввода с карты...
+2026-02-20 22:04:26,760 - INFO - Для остановки нажмите Ctrl+C в консоли.
+2026-02-20 22:05:11,927 - INFO - Считана карта: 0653107939
+2026-02-20 22:05:14,019 - INFO - Ответ сервера: 200 - {'status': 'checked_in', 'employee_name': 'Чертков Андрей Васильевич', 'time': '2026-02-20T22:05:13.989577'}
+2026-02-20 22:05:33,338 - INFO - Считана карта: 0653107939
+2026-02-20 22:05:35,377 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after check-in'}
+2026-02-20 22:05:47,819 - INFO - Считана карта: 0653107939
+2026-02-20 22:05:49,860 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after check-in'}
+2026-02-20 22:06:11,872 - INFO - Считана карта: 0653107939
+2026-02-20 22:06:13,892 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after check-in'}
+2026-02-20 22:06:13,908 - INFO - Считана карта: 653107939
+2026-02-20 22:06:15,953 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:06:15,953 - INFO - Считана карта: 53107939
+2026-02-20 22:06:18,016 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:07:01,433 - INFO - Демон сканера запущен. Ожидание ввода с карты...
+2026-02-20 22:07:01,433 - INFO - Для остановки нажмите Ctrl+C в консоли.
+2026-02-20 22:07:09,661 - INFO - Считана карта: 0653107939
+2026-02-20 22:07:11,743 - INFO - Ответ сервера: 200 - {'status': 'checked_out', 'employee_name': 'Чертков Андрей Васильевич', 'time': '2026-02-20T22:07:11.716028'}
+2026-02-20 22:07:11,749 - INFO - Считана карта: 653107939
+2026-02-20 22:07:13,799 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:07:16,875 - INFO - Считана карта: 0700979587
+2026-02-20 22:07:18,928 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:07:27,332 - INFO - Считана карта: 0700979587
+2026-02-20 22:07:29,370 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:07:31,822 - INFO - Считана карта: 0700979587
+2026-02-20 22:07:33,846 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:07:35,073 - INFO - Считана карта: 0653107939
+2026-02-20 22:07:37,118 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after previous check-out'}
+2026-02-20 22:07:43,041 - INFO - Считана карта: 0653107939
+2026-02-20 22:07:45,074 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after previous check-out'}
+2026-02-20 22:07:48,017 - INFO - Считана карта: 0700979587
+2026-02-20 22:07:50,040 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:08:12,628 - INFO - Считана карта: 0700979587
+2026-02-20 22:08:14,657 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:08:17,138 - INFO - Считана карта: 0653107939
+2026-02-20 22:08:19,214 - INFO - Ответ сервера: 200 - {'status': 're_checked_out', 'employee_name': 'Чертков Андрей Васильевич', 'time': '2026-02-20T22:08:19.187576'}
+2026-02-20 22:08:32,533 - INFO - Считана карта: 0653107939
+2026-02-20 22:08:34,554 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after previous check-out'}
+2026-02-20 22:08:40,888 - INFO - Считана карта: 0700979587
+2026-02-20 22:08:42,956 - INFO - Ответ сервера: 200 - {'status': 'checked_in', 'employee_name': 'Горяной Владислав Тимофеевич', 'time': '2026-02-20T22:08:42.946476'}
+2026-02-20 22:08:49,109 - INFO - Считана карта: 0700979587
+2026-02-20 22:08:51,149 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after check-in'}
+2026-02-20 22:08:52,009 - INFO - Считана карта: 0700979587
+2026-02-20 22:08:54,054 - INFO - Ответ сервера: 200 - {'status': 'debounced', 'reason': 'scanned too soon after check-in'}
+2026-02-20 22:08:54,062 - INFO - Считана карта: 00979587
+2026-02-20 22:08:56,102 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:08:56,113 - INFO - Считана карта: 00979587
+2026-02-20 22:08:58,163 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:08:58,163 - INFO - Считана карта: 00979587
+2026-02-20 22:09:00,209 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
+2026-02-20 22:09:00,220 - INFO - Считана карта: 00979587
+2026-02-20 22:09:02,275 - ERROR - Ошибка отправки данных на сервер: 404 Client Error: Not Found for url: http://localhost:8000/api/attendance/scan
