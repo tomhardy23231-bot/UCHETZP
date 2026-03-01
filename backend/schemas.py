@@ -2,7 +2,44 @@
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from typing import Optional, List
-from models import TransactionType
+from models import TransactionType, UserRole
+
+
+# ========== СХЕМЫ ПОЛЬЗОВАТЕЛЕЙ И АВТОРИЗАЦИИ ==========
+
+class UserBase(BaseModel):
+    username: str
+    role: UserRole = UserRole.USER
+    subscription_until: datetime
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserUpdate(BaseModel):
+    password: Optional[str] = None
+    role: Optional[UserRole] = None
+    subscription_until: Optional[datetime] = None
+
+
+class User(UserBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user: User
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 # ========== СХЕМЫ СОТРУДНИКОВ ==========

@@ -7,6 +7,75 @@ import models
 import schemas
 from dateutil.parser import parse
 from dateutil.tz import UTC
+from passlib.context import CryptContext
+
+# Настройка хеширования паролей
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# ========== CRUD ДЛЯ ПОЛЬЗОВАТЕЛЕЙ И АВТОРИЗАЦИИ ==========
+
+def get_user_by_username(db: Session, username: str) -> Optional[models.User]:
+    """Получить пользователя по имени."""
+    return db.query(models.User).filter(models.User.username == username).first()
+
+
+def get_user(db: Session, user_id: int) -> Optional[models.User]:
+    """Получить пользователя по ID."""
+    return db.query(models.User).filter(models.User.id == user_id).first()
+
+
+def get_users(db: Session) -> List[models.User]:
+    """Получить список всех пользователей."""
+    return db.query(models.User).all()
+
+
+def create_user(db: Session, user: schemas.UserCreate) -> models.User:
+    """Создать нового пользователя."""
+    hashed_password = pwd_context.hash(user.password)
+    db_user = models.User(
+        username=user.username,
+        password_hash=hashed_password,
+        role=user.role,
+        subscription_until=user.subscription_until
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+
+def update_user(db: Session, user_id: int, user_update: schemas.UserUpdate) -> Optional[models.User]:
+    """Обновить данные пользователя."""
+    db_user = get_user(db, user_id)
+    if not db_user:
+        return None
+    
+    update_data = user_update.model_dump(exclude_unset=True)
+    if "password" in update_data:
+        db_user.password_hash = pwd_context.hash(update_data.pop("password"))
+    
+    for key, value in update_data.items():
+        setattr(db_user, key, value)
+    
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+
+def delete_user(db: Session, user_id: int) -> bool:
+    """Удалить пользователя."""
+    db_user = get_user(db, user_id)
+    if db_user:
+        db.delete(db_user)
+        db.commit()
+        return True
+    return False
+
+
+def verify_password(plain_password, hashed_password):
+    """Проверить пароль."""
+    return pwd_context.verify(plain_password, hashed_password)
 
 
 # ========== CRUD ДЛЯ СОТРУДНИКОВ ==========
