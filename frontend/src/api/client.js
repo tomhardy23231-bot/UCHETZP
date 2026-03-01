@@ -37,7 +37,20 @@ api.interceptors.response.use(
 // ========== AUTH ==========
 
 export const login = async (username, password) => {
-  const response = await api.post('/api/login', { username, password });
+  const formData = new FormData();
+  formData.append('username', username);
+  formData.append('password', password);
+  
+  const response = await api.post('/api/login', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  
+  // Сохраняем токен
+  localStorage.setItem('token', response.data.access_token);
+  localStorage.setItem('user', JSON.stringify(response.data.user));
+  
   return response.data;
 };
 

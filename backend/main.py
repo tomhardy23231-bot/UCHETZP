@@ -5,13 +5,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from datetime import datetime, timedelta
-import jwt
-from pydantic import BaseModel
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 import calendar
 
 import database
@@ -20,18 +20,16 @@ import schemas
 import crud
 
 # Настройки безопасности
-SECRET_KEY = "SECRET_FOR_UC_HET_ZP_SYSTEM" # В продакшене вынести в .env
+SECRET_KEY = "SECRET_FOR_UC_HET_ZP_SYSTEM" 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 неделя
-SCANNER_API_KEY = "SCANNER_HARDWARE_KEY_2026" # Ключ для физического сканера
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 
+SCANNER_API_KEY = "SCANNER_HARDWARE_KEY_2026"
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
 
 # Глобальная переменная для перехвата сканирований неизвестных карт (в режиме ввода карт)
 latest_scanned_card = None
-
-# Создаём таблицы в базе данных
-models.Base.metadata.create_all(bind=database.engine)
 
 # Инициализируем FastAPI приложение
 app = FastAPI(
@@ -52,12 +50,9 @@ app.add_middleware(
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ AUTH ==========
 
-def create_access_token(data: dict, expires_delta: timedelta = None):
+def create_access_token(data: dict):
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -73,8 +68,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-    except jwt.PyJWTError:
+    except JWTError:
         raise credentials_exception
+    
     user = crud.get_user_by_username(db, username=username)
     if user is None:
         raise credentials_exception
@@ -113,6 +109,9 @@ async def verify_scanner_key(x_api_key: Optional[str] = Header(None)):
 
 @app.on_event("startup")
 async def startup_event():
+    # Создаём таблицы в базе данных при старте
+    models.Base.metadata.create_all(bind=database.engine)
+    
     db = database.SessionLocal()
     try:
         admin = crud.get_user_by_username(db, "admin")
@@ -132,19 +131,16 @@ async def startup_event():
 # ========== AUTH ENDPOINTS ==========
 
 @app.post("/api/login", response_model=schemas.Token)
-def login(login_data: schemas.LoginRequest, db: Session = Depends(database.get_db)):
-    user = crud.get_user_by_username(db, username=login_data.username)
-    if not user or not crud.verify_password(login_data.password, user.password_hash):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
+    user = crud.get_user_by_username(db, username=form_data.username)
+    if not user or not pwd_context.verify(form_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
+    access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer", "user": user}
 
 @app.get("/api/me", response_model=schemas.User)
