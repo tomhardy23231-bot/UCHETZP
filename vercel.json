@@ -5,15 +5,8 @@
       "destination": "backend/main.py"
     },
     {
-      "source": "/((?!api/).*)",
-      "destination": "/frontend/dist/$1"
-    }
-  ],
-  "redirects": [
-    {
-      "source": "/",
-      "destination": "/index.html",
-      "permanent": false
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
   "builds": [
