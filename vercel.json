@@ -1,18 +1,4 @@
 {
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/backend/main.py"
-    },
-    {
-      "source": "/assets/(.*)",
-      "destination": "/frontend/assets/$1"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/frontend/index.html"
-    }
-  ],
   "builds": [
     {
       "src": "backend/main.py",
@@ -24,6 +10,28 @@
       "config": {
         "distDir": "dist"
       }
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/sound.mp3",
+      "destination": "/frontend/sound.mp3"
+    },
+    {
+      "source": "/assets/(.*)",
+      "destination": "/frontend/assets/$1"
+    },
+    {
+      "source": "/((?!api/).*\\.[^/]+)$",
+      "destination": "/frontend/$1"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/frontend/index.html"
     }
   ]
 }
