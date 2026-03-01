@@ -6,7 +6,7 @@ import { UserRoundCheck, UserRoundX } from 'lucide-react';
 
 const NotificationManager = () => {
   const [prevAttendance, setPrevAttendance] = useState([]);
-  const audioRef = useRef(null);
+  const audioRef = useRef(new Audio("/sound.mp3"));
   const isFirstLoad = useRef(true);
 
   // Load today's attendance to track changes
@@ -120,7 +120,6 @@ const NotificationManager = () => {
 
   return (
     <>
-      <audio ref={audioRef} src="/sound.mp3" preload="auto" />
       <Toaster />
     </>
   );
