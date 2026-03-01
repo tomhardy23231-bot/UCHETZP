@@ -22,7 +22,6 @@ const Employees = () => {
   
   // Card Input Mode state
   const [isPolling, setIsPolling] = useState(false);
-  const [tempScanId, setTempScanId] = useState(null);
   const pollingRef = useRef(null);
 
   const loadEmployees = useCallback(async () => {
@@ -56,14 +55,12 @@ const Employees = () => {
     }
 
     setIsPolling(true);
-    setTempScanId(null);
 
     pollingRef.current = setInterval(async () => {
       try {
         const data = await getLatestAttendance();
         if (data && data.card_id) {
           setCardId(data.card_id);
-          setTempScanId(data.id);
           stopPolling();
         }
       } catch (error) {
@@ -84,7 +81,6 @@ const Employees = () => {
     setRate('');
     setPointVal('');
     setCardId('');
-    setTempScanId(null);
     setShowModal(true);
   }, []);
 
@@ -97,7 +93,6 @@ const Employees = () => {
     setRate(employee.rate.toString());
     setPointVal(employee.point_val.toString());
     setCardId(employee.card_id || '');
-    setTempScanId(null);
     setShowModal(true);
   }, []);
 
@@ -126,21 +121,12 @@ const Employees = () => {
         await createEmployee(data);
       }
 
-      // Если мы получили ID карты через режим ввода, удаляем этот временный скан
-      if (tempScanId) {
-        try {
-          await deleteAttendance(tempScanId);
-        } catch (err) {
-          console.error('Ошибка удаления временного скана:', err);
-        }
-      }
-
       await loadEmployees();
       closeModal();
     } catch (error) {
       alert('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
-  }, [name, position, phone, bankAcc, rate, pointVal, cardId, editingEmployee, tempScanId, loadEmployees, closeModal]);
+  }, [name, position, phone, bankAcc, rate, pointVal, cardId, editingEmployee, loadEmployees, closeModal]);
 
   const handleDelete = useCallback(async (id) => {
     if (confirm('Удалить сотрудника? Все связанные данные также будут удалены.')) {

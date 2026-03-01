@@ -224,6 +224,20 @@ def delete_attendance(db: Session, attendance_id: int) -> bool:
     return False
 
 
+def get_latest_attendance_scan(db: Session, minutes: int = 2) -> Optional[models.Attendance]:
+    """
+    Получить самую последнюю запись посещаемости (скан),
+    созданную в течение последних `minutes` минут.
+    """
+    time_threshold = datetime.now() - timedelta(minutes=minutes)
+    
+    # Ищем самую последнюю запись по времени прихода (in_time)
+    # in_time в БД обычно naive datetime (в локальном времени или UTC)
+    return db.query(models.Attendance).filter(
+        models.Attendance.in_time >= time_threshold
+    ).order_by(models.Attendance.in_time.desc()).first()
+
+
 # ========== CRUD ДЛЯ ФИНАНСОВЫХ ТРАНЗАКЦИЙ ==========
 
 def get_transactions_by_employee_and_month(
@@ -317,31 +331,30 @@ def get_current_month_str() -> str:
 </file>
 
 <file path="backend/database.py">
-# database.py - Конфигурация базы данных SQLite
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-# Получаем URL базы данных из переменной окружения или используем SQLite по умолчанию
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./payroll.db")
+# Получаем URL базы данных из переменной окружения
+database_url = os.getenv("DATABASE_URL")
 
-# Параметры подключения: для SQLite нужен check_same_thread=False
-connect_args = {}
-if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+# Если переменная DATABASE_URL не задана, вызываем ошибку
+if not database_url:
+    raise ValueError("DATABASE_URL environment variable is not set")
 
-# Создаём движок базы данных
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args=connect_args
-)
+# Исправляем устаревшую схему 'postgres://' на 'postgresql://' для совместимости со SQLAlchemy >= 1.4
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+# Создаём движок SQLAlchemy для PostgreSQL (без параметров SQLite)
+engine = create_engine(database_url)
 
 # Создаём сессию для работы с БД
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Базовый класс для моделей
 Base = declarative_base()
-
 
 # Зависимость для получения сессии БД в эндпоинтах
 def get_db():
@@ -355,6 +368,10 @@ def get_db():
 
 <file path="backend/main.py">
 # main.py - Главное приложение FastAPI
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -509,12 +526,30 @@ def get_attendance_journal(
         result.append({
             "id": record.id,
             "date": record.date,
-            "employee_name": record.employee.name,
+            "employee_name": record.employee.name if record.employee else "Неизвестная карта",
             "in_time": in_time_str,
             "out_time": out_time_str,
             "total_hours": total_hours
         })
     return result
+
+
+@app.get("/api/attendance/latest", response_model=schemas.LatestAttendanceResponse)
+def get_latest_attendance(db: Session = Depends(database.get_db)):
+    """
+    Получить самый свежий скан (за последние 2 минуты) для режима ввода новых карт.
+    """
+    record = crud.get_latest_attendance_scan(db, minutes=2)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Свежих сканирований не найдено"
+        )
+    
+    return {
+        "id": record.id,
+        "card_id": record.card_id
+    }
 
 
 @app.put("/api/attendance/{attendance_id}")
@@ -561,12 +596,6 @@ def scan_card_for_attendance(
     card_id = request.card_id
     employee = crud.get_employee_by_card(db, card_id)
 
-    if not employee:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Сотрудник с картой ID {card_id} не найден"
-        )
-
     # Используем переданное время или текущее
     now = request.timestamp if request.timestamp else datetime.now()
     
@@ -576,18 +605,32 @@ def scan_card_for_attendance(
         
     today_str = now.strftime("%Y-%m-%d")
 
+    if not employee:
+        # Для режима ввода новых карт: сохраняем скан даже без сотрудника
+        new_attendance = models.Attendance(
+            employee_id=None,
+            card_id=card_id,
+            date=today_str,
+            in_time=now
+        )
+        db.add(new_attendance)
+        db.commit()
+        return {"status": "unknown_card", "card_id": card_id, "time": now}
+
     # Ищем существующую запись за дату сканирования
     attendance_record = crud.get_attendance_by_employee_and_date(db, employee.id, today_str)
 
     if not attendance_record:
         # Сценарий A: Приход (первое сканирование за день)
-        new_attendance = schemas.AttendanceCreate(
+        new_attendance = models.Attendance(
             employee_id=employee.id,
+            card_id=card_id,
             date=today_str,
             in_time=now,
             out_time=None
         )
-        created_record = crud.create_attendance(db, new_attendance)
+        db.add(new_attendance)
+        db.commit()
         return {"status": "checked_in", "employee_name": employee.name, "time": now}
 
     # Если запись есть, проверяем уход
@@ -600,6 +643,7 @@ def scan_card_for_attendance(
             return {"status": "debounced", "reason": "scanned too soon after check-in"}
         
         attendance_record.out_time = now
+        attendance_record.card_id = card_id # Обновляем card_id на всякий случай
         db.commit()
         db.refresh(attendance_record)
         return {"status": "checked_out", "employee_name": employee.name, "time": now}
@@ -611,6 +655,7 @@ def scan_card_for_attendance(
             return {"status": "debounced", "reason": "scanned too soon after previous check-out"}
 
         attendance_record.out_time = now
+        attendance_record.card_id = card_id
         db.commit()
         db.refresh(attendance_record)
         return {"status": "re_checked_out", "employee_name": employee.name, "time": now}
@@ -1093,7 +1138,8 @@ class Attendance(Base):
     __tablename__ = "attendance"
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    card_id = Column(String, nullable=True) # Добавляем card_id для неизвестных карт
     date = Column(String, nullable=False, index=True)  # Дата в формате YYYY-MM-DD
     in_time = Column(DateTime, nullable=False)  # Время прихода
     out_time = Column(DateTime, nullable=True)  # Время ухода (может быть пустым)
@@ -1153,7 +1199,7 @@ psycopg2-binary==2.9.9
 # schemas.py - Pydantic схемы для валидации данных
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from models import TransactionType
 
 
@@ -1320,6 +1366,12 @@ class CardScanRequest(BaseModel):
 class BulkScanRequest(BaseModel):
     """Схема для массовой загрузки офлайн-сканов."""
     scans: List[CardScanRequest]
+
+
+class LatestAttendanceResponse(BaseModel):
+    """Схема ответа для последнего скана (режим ввода карт)."""
+    id: int
+    card_id: str
 </file>
 
 <file path="frontend/index.html">
@@ -1448,6 +1500,11 @@ export const updateAttendance = async (id, inTime, outTime) => {
 
 export const deleteAttendance = async (id) => {
   const response = await api.delete(`/api/attendance/${id}`);
+  return response.data;
+};
+
+export const getLatestAttendance = async () => {
+  const response = await api.get('/api/attendance/latest');
   return response.data;
 };
 
@@ -2899,9 +2956,9 @@ export default Dashboard;
 
 <file path="frontend/src/pages/Employees.jsx">
 // pages/Employees.jsx - Modern Soft UI Employees Management
-import React, { useState, useEffect, useCallback } from 'react';
-import { UserPlus, Edit2, Trash2, X, CreditCard, Search, UserRound, Briefcase, Phone, DollarSign, Target, UserRoundCheck, AlertTriangle, UserRoundX } from 'lucide-react';
-import { getEmployees, createEmployee, updateEmployee, deleteEmployee } from '../api/client';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { UserPlus, Edit2, Trash2, X, CreditCard, Search, UserRound, Briefcase, Phone, DollarSign, Target, Loader2, Signal } from 'lucide-react';
+import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getLatestAttendance, deleteAttendance } from '../api/client';
 
 const Employees = () => {
   const [employees, setEmployees] = useState([]);
@@ -2919,6 +2976,11 @@ const Employees = () => {
   const [rate, setRate] = useState('');
   const [pointVal, setPointVal] = useState('');
   const [cardId, setCardId] = useState('');
+  
+  // Card Input Mode state
+  const [isPolling, setIsPolling] = useState(false);
+  const [tempScanId, setTempScanId] = useState(null);
+  const pollingRef = useRef(null);
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
@@ -2936,6 +2998,40 @@ const Employees = () => {
     loadEmployees();
   }, [loadEmployees]);
 
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+    setIsPolling(false);
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (isPolling) {
+      stopPolling();
+      return;
+    }
+
+    setIsPolling(true);
+    setTempScanId(null);
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const data = await getLatestAttendance();
+        if (data && data.card_id) {
+          setCardId(data.card_id);
+          setTempScanId(data.id);
+          stopPolling();
+        }
+      } catch (error) {
+        // Игнорируем 404 ошибки опроса
+        if (error.response?.status !== 404) {
+          console.error('Ошибка опроса карт:', error);
+        }
+      }
+    }, 2000);
+  }, [isPolling, stopPolling]);
+
   const openAddModal = useCallback(() => {
     setEditingEmployee(null);
     setName('');
@@ -2945,6 +3041,7 @@ const Employees = () => {
     setRate('');
     setPointVal('');
     setCardId('');
+    setTempScanId(null);
     setShowModal(true);
   }, []);
 
@@ -2957,13 +3054,15 @@ const Employees = () => {
     setRate(employee.rate.toString());
     setPointVal(employee.point_val.toString());
     setCardId(employee.card_id || '');
+    setTempScanId(null);
     setShowModal(true);
   }, []);
 
   const closeModal = useCallback(() => {
+    stopPolling();
     setShowModal(false);
     setEditingEmployee(null);
-  }, []);
+  }, [stopPolling]);
 
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
@@ -2983,12 +3082,22 @@ const Employees = () => {
       } else {
         await createEmployee(data);
       }
+
+      // Если мы получили ID карты через режим ввода, удаляем этот временный скан
+      if (tempScanId) {
+        try {
+          await deleteAttendance(tempScanId);
+        } catch (err) {
+          console.error('Ошибка удаления временного скана:', err);
+        }
+      }
+
       await loadEmployees();
       closeModal();
     } catch (error) {
       alert('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
-  }, [name, position, phone, bankAcc, rate, pointVal, cardId, editingEmployee, loadEmployees, closeModal]);
+  }, [name, position, phone, bankAcc, rate, pointVal, cardId, editingEmployee, tempScanId, loadEmployees, closeModal]);
 
   const handleDelete = useCallback(async (id) => {
     if (confirm('Удалить сотрудника? Все связанные данные также будут удалены.')) {
@@ -3326,17 +3435,54 @@ const Employees = () => {
 
                 {/* Card ID */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-1.5">
-                    <CreditCard size={16} className="text-slate-500" />
-                    Номер карты
+                  <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <CreditCard size={16} className="text-slate-500" />
+                      Номер карты
+                    </span>
+                    <button
+                      type="button"
+                      onClick={startPolling}
+                      className={`text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-md transition-all flex items-center gap-1 ${
+                        isPolling 
+                        ? 'bg-amber-100 text-amber-600 animate-pulse' 
+                        : 'bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-600'
+                      }`}
+                    >
+                      {isPolling ? (
+                        <>
+                          <Loader2 size={10} className="animate-spin" />
+                          Ожидание...
+                        </>
+                      ) : (
+                        <>
+                          <Signal size={10} />
+                          Режим ввода
+                        </>
+                      )}
+                    </button>
                   </label>
-                  <input
-                    type="text"
-                    value={cardId}
-                    onChange={(e) => setCardId(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-soft focus:shadow-soft-lg transition-soft"
-                    placeholder="ID карты доступа"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={cardId}
+                      onChange={(e) => setCardId(e.target.value)}
+                      className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-soft focus:shadow-soft-lg transition-soft ${
+                        isPolling ? 'border-amber-300 bg-amber-50/30' : 'border-slate-200'
+                      }`}
+                      placeholder={isPolling ? "Поднесите карту к сканеру..." : "ID карты доступа"}
+                      readOnly={isPolling}
+                    />
+                    {isPolling && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <div className="flex gap-1">
+                          <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                          <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                          <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce"></span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Rate */}
@@ -4753,11 +4899,11 @@ if __name__ == "__main__":
     },
     {
       "source": "/assets/(.*)",
-      "destination": "/frontend/dist/assets/$1"
+      "destination": "/frontend/assets/$1"
     },
     {
       "source": "/(.*)",
-      "destination": "/frontend/dist/index.html"
+      "destination": "/frontend/index.html"
     }
   ],
   "builds": [
@@ -4768,7 +4914,9 @@ if __name__ == "__main__":
     {
       "src": "frontend/package.json",
       "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
+      "config": {
+        "distDir": "dist"
+      }
     }
   ]
 }

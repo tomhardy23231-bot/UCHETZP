@@ -172,5 +172,4 @@ class BulkScanRequest(BaseModel):
 
 class LatestAttendanceResponse(BaseModel):
     """Схема ответа для последнего скана (режим ввода карт)."""
-    id: int
     card_id: str
