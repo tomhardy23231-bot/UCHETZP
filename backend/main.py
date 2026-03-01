@@ -20,7 +20,7 @@ import schemas
 import crud
 
 # Настройки безопасности
-SECRET_KEY = "SECRET_FOR_UC_HET_ZP_SYSTEM" 
+SECRET_KEY = os.getenv("JWT_SECRET", "SECRET_FOR_UC_HET_ZP_SYSTEM")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 
 SCANNER_API_KEY = "SCANNER_HARDWARE_KEY_2026"
@@ -120,7 +120,7 @@ async def startup_event():
                 username="admin",
                 password="Kniga23",
                 role=models.UserRole.ADMIN,
-                subscription_until=datetime(2099, 12, 31)
+                subscription_until=datetime(2099, 1, 1)
             )
             crud.create_user(db, admin_schema)
             print("Admin user created.")
