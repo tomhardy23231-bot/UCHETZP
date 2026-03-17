@@ -50,6 +50,29 @@ def update_employee(db: Session, employee_id: int, employee: schemas.EmployeeUpd
         update_data = employee.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(db_employee, key, value)
+        
+        # Если изменились ставки, обновляем слепки за текущий и предыдущий месяцы
+        if "rate" in update_data or "point_val" in update_data:
+            now = datetime.now()
+            current_month = now.strftime("%Y-%m")
+            
+            # Расчет предыдущего месяца
+            first_day_current = now.replace(day=1)
+            last_day_prev = first_day_current - timedelta(days=1)
+            prev_month = last_day_prev.strftime("%Y-%m")
+            
+            # Поиск и обновление слепков
+            snapshots = db.query(models.SalarySnapshot).filter(
+                models.SalarySnapshot.employee_id == employee_id,
+                models.SalarySnapshot.month.in_([current_month, prev_month])
+            ).all()
+            
+            for snapshot in snapshots:
+                if "rate" in update_data:
+                    snapshot.salary_rate = update_data["rate"]
+                if "point_val" in update_data:
+                    snapshot.point_rate = update_data["point_val"]
+                    
         db.commit()
         db.refresh(db_employee)
     return db_employee
@@ -117,10 +140,9 @@ def update_attendance(
     """Обновить запись посещаемости."""
     db_attendance = db.query(models.Attendance).filter(models.Attendance.id == attendance_id).first()
     if db_attendance:
-        if attendance.in_time is not None:
-            db_attendance.in_time = attendance.in_time
-        if attendance.out_time is not None:
-            db_attendance.out_time = attendance.out_time
+        update_data = attendance.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_attendance, key, value)
         db.commit()
         db.refresh(db_attendance)
     return db_attendance

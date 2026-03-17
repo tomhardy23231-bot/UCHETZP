@@ -63,14 +63,19 @@ frontend/src/components/EmployeeCard.jsx
 frontend/src/components/GridView.jsx
 frontend/src/components/NotificationManager.jsx
 frontend/src/components/PayslipTemplate.jsx
+frontend/src/components/ProtectedRoute.jsx
 frontend/src/components/Sidebar.jsx
+frontend/src/components/SubscriptionGuard.jsx
 frontend/src/components/TableView.jsx
+frontend/src/context/AuthContext.jsx
 frontend/src/hooks/useTtlLocalStorage.js
 frontend/src/index.css
 frontend/src/main.jsx
+frontend/src/pages/AdminPanel.jsx
 frontend/src/pages/Dashboard.jsx
 frontend/src/pages/Employees.jsx
 frontend/src/pages/Journal.jsx
+frontend/src/pages/Login.jsx
 frontend/src/pages/Payroll.jsx
 frontend/tailwind.config.js
 frontend/vite.config.js
@@ -2758,6 +2763,34 @@ const PayslipTemplate = React.forwardRef(({ employee, payrollData, transactions 
 export default PayslipTemplate;
 </file>
 
+<file path="frontend/src/components/ProtectedRoute.jsx">
+// components/ProtectedRoute.jsx
+import React from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+
+const ProtectedRoute = ({ children, adminOnly = false }) => {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center font-bold text-slate-400">Загрузка...</div>;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (adminOnly && user.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  return children;
+};
+
+export default ProtectedRoute;
+</file>
+
 <file path="frontend/src/components/Sidebar.jsx">
 // components/Sidebar.jsx - Modern Soft UI Sidebar
 import React, { useState } from 'react';
@@ -2886,6 +2919,93 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
 };
 
 export default Sidebar;
+</file>
+
+<file path="frontend/src/components/SubscriptionGuard.jsx">
+// components/SubscriptionGuard.jsx
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { Lock, CreditCard, MessageCircle } from 'lucide-react';
+import axios from 'axios';
+
+const SubscriptionGuard = ({ children }) => {
+  const { user, logout } = useAuth();
+  const [isExpired, setIsExpired] = useState(false);
+
+  useEffect(() => {
+    if (user && user.role !== 'admin') {
+      const expiryDate = new Date(user.subscription_until);
+      const now = new Date();
+      if (expiryDate < now) {
+        setIsExpired(true);
+      }
+    } else {
+      setIsExpired(false);
+    }
+  }, [user]);
+
+  // Intercept 403 globally via axios interceptor if needed, 
+  // but the date check above is primary for the overlay.
+
+  if (isExpired) {
+    return (
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden">
+        {/* Blurred Background */}
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-xl" />
+        
+        {/* Overlay Card */}
+        <div className="relative bg-white w-full max-w-lg mx-4 rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
+          <div className="p-10 text-center">
+            <div className="w-20 h-20 bg-rose-100 rounded-3xl flex items-center justify-center text-rose-600 mx-auto mb-8 shadow-soft">
+              <Lock size={40} />
+            </div>
+            
+            <h2 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">
+              Доступ ограничен
+            </h2>
+            
+            <p className="text-slate-500 font-medium mb-8 leading-relaxed">
+              Срок действия вашей подписки истек. <br />
+              Стоимость продления: <span className="text-slate-900 font-bold">500 грн / месяц</span>.
+            </p>
+            
+            <div className="bg-slate-50 rounded-3xl p-6 mb-8 border border-slate-100 text-left">
+              <div className="flex items-start gap-4 mb-4">
+                <div className="bg-blue-100 p-2 rounded-xl text-blue-600">
+                  <CreditCard size={20} />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Номер карты для оплаты</p>
+                  <p className="text-xl font-black text-slate-900 tracking-wider">5168 7520 0877 5721</p>
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-4">
+                <div className="bg-emerald-100 p-2 rounded-xl text-emerald-600">
+                  <MessageCircle size={20} />
+                </div>
+                <p className="text-sm font-medium text-slate-600">
+                  После оплаты сообщите администратору для мгновенной активации аккаунта.
+                </p>
+              </div>
+            </div>
+            
+            <button 
+              onClick={logout}
+              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-soft shadow-soft-lg"
+            >
+              Выйти из системы
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return children;
+};
+
+export default SubscriptionGuard;
 </file>
 
 <file path="frontend/src/components/TableView.jsx">
@@ -3092,6 +3212,62 @@ const TableView = ({
 };
 
 export default TableView;
+</file>
+
+<file path="frontend/src/context/AuthContext.jsx">
+// context/AuthContext.jsx
+import React, { createContext, useState, useContext, useEffect } from 'react';
+import { login as apiLogin, getMe } from '../api/client';
+
+const AuthContext = createContext(null);
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(() => {
+    const savedUser = localStorage.getItem('user');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          const userData = await getMe();
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
+        } catch (error) {
+          logout();
+        }
+      }
+      setLoading(false);
+    };
+    checkAuth();
+  }, []);
+
+  const login = async (username, password) => {
+    const data = await apiLogin(username, password);
+    localStorage.setItem('token', data.access_token);
+    localStorage.setItem('user', JSON.stringify(data.user));
+    setUser(data.user);
+    return data.user;
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setUser(null);
+    window.location.href = '/login';
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout, loading, setUser }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => useContext(AuthContext);
 </file>
 
 <file path="frontend/src/hooks/useTtlLocalStorage.js">
@@ -3356,6 +3532,236 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>
 );
+</file>
+
+<file path="frontend/src/pages/AdminPanel.jsx">
+// pages/AdminPanel.jsx
+import React, { useState, useEffect } from 'react';
+import { getUsers, createAdminUser, updateUser, deleteUser } from '../api/client';
+import { UserPlus, Shield, Calendar, Trash2, Clock, CheckCircle2, XCircle, ChevronRight, User } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+const AdminPanel = () => {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newUser, setNewUser] = useState({ username: '', password: '', subscription_until: '' });
+
+  const fetchUsers = async () => {
+    try {
+      const data = await getUsers();
+      setUsers(data);
+    } catch (error) {
+      toast.error('Ошибка загрузки пользователей');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    try {
+      // Create user with 30 days sub by default if date not picked
+      const subDate = newUser.subscription_until 
+        ? new Date(newUser.subscription_until).toISOString() 
+        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      
+      await createAdminUser({ ...newUser, subscription_until: subDate, role: 'user' });
+      toast.success('Пользователь создан');
+      setShowAddModal(false);
+      setNewUser({ username: '', password: '', subscription_until: '' });
+      fetchUsers();
+    } catch (error) {
+      toast.error('Ошибка создания: ' + (error.response?.data?.detail || 'Неизвестная ошибка'));
+    }
+  };
+
+  const handleExtend = async (id, currentExpiry) => {
+    try {
+      const current = new Date(currentExpiry);
+      const newExpiry = new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await updateUser(id, { subscription_until: newExpiry });
+      toast.success('Подписка продлена на 30 дней');
+      fetchUsers();
+    } catch (error) {
+      toast.error('Ошибка продления');
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Удалить этого пользователя навсегда?')) return;
+    try {
+      await deleteUser(id);
+      toast.success('Пользователь удален');
+      fetchUsers();
+    } catch (error) {
+      toast.error('Ошибка удаления');
+    }
+  };
+
+  const getDaysRemaining = (expiry) => {
+    const diff = new Date(expiry) - new Date();
+    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+  };
+
+  if (loading) return <div className="p-10 text-center font-bold text-slate-500">Загрузка панели...</div>;
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-8">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+          <div>
+            <h1 className="text-5xl font-black text-slate-900 tracking-tight flex items-center gap-4">
+              <Shield size={48} className="text-blue-600" />
+              Админ-центр
+            </h1>
+            <p className="text-slate-500 font-medium mt-2">Управление пользователями и подписками</p>
+          </div>
+          
+          <button 
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-6 py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-soft-lg hover:bg-blue-700 transition-soft active:scale-95"
+          >
+            <UserPlus size={20} />
+            Добавить клиента
+          </button>
+        </div>
+
+        {/* Users Table */}
+        <div className="bg-white rounded-[2.5rem] shadow-soft overflow-hidden border border-slate-100">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="px-8 py-6 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Пользователь</th>
+                  <th className="px-8 py-6 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Статус</th>
+                  <th className="px-8 py-6 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Осталось</th>
+                  <th className="px-8 py-6 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Действия</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {users.map(u => {
+                  const days = getDaysRemaining(u.subscription_until);
+                  const isExpired = days === 0 && u.role !== 'admin';
+                  
+                  return (
+                    <tr key={u.id} className="hover:bg-slate-50/50 transition-colors group">
+                      <td className="px-8 py-6">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${u.role === 'admin' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                            {u.username[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-black text-slate-900 flex items-center gap-2">
+                              {u.username}
+                              {u.role === 'admin' && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] rounded-full uppercase tracking-tighter font-black">ROOT</span>}
+                            </p>
+                            <p className="text-xs font-medium text-slate-400">ID: {u.id}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-8 py-6">
+                        {isExpired ? (
+                          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-rose-100 text-rose-600 rounded-full text-xs font-black uppercase tracking-wider">
+                            <XCircle size={14} /> Истекла
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-100 text-emerald-600 rounded-full text-xs font-black uppercase tracking-wider">
+                            <CheckCircle2 size={14} /> Активна
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="flex flex-col">
+                          <span className={`text-lg font-black ${isExpired ? 'text-rose-600' : 'text-slate-900'}`}>
+                            {u.role === 'admin' ? '∞' : `${days} дн.`}
+                          </span>
+                          <span className="text-xs font-medium text-slate-400">
+                            до {new Date(u.subscription_until).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button 
+                            onClick={() => handleExtend(u.id, u.subscription_until)}
+                            className="p-3 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-soft"
+                            title="+30 дней"
+                          >
+                            <Clock size={18} />
+                          </button>
+                          {u.username !== 'admin' && (
+                            <button 
+                              onClick={() => handleDelete(u.id)}
+                              className="p-3 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-soft"
+                              title="Удалить"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Modal */}
+        {showAddModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowAddModal(false)} />
+            <div className="relative bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-10">
+              <h2 className="text-3xl font-black text-slate-900 mb-8 tracking-tight">Новый доступ</h2>
+              <form onSubmit={handleAddUser} className="space-y-6">
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Логин</label>
+                  <input 
+                    required
+                    value={newUser.username}
+                    onChange={e => setNewUser({...newUser, username: e.target.value})}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Пароль</label>
+                  <input 
+                    required
+                    type="password"
+                    value={newUser.password}
+                    onChange={e => setNewUser({...newUser, password: e.target.value})}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Дата истечения (опц.)</label>
+                  <input 
+                    type="date"
+                    value={newUser.subscription_until}
+                    onChange={e => setNewUser({...newUser, subscription_until: e.target.value})}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+                <div className="pt-4 flex gap-4">
+                  <button type="button" onClick={() => setShowAddModal(false)} className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold">Отмена</button>
+                  <button type="submit" className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-soft">Создать</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default AdminPanel;
 </file>
 
 <file path="frontend/src/pages/Dashboard.jsx">
@@ -4620,6 +5026,113 @@ const Journal = () => {
 export default Journal;
 </file>
 
+<file path="frontend/src/pages/Login.jsx">
+// pages/Login.jsx
+import React, { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { Lock, User, Eye, EyeOff, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+const Login = () => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await login(username, password);
+      toast.success('Добро пожаловать!');
+      navigate('/');
+    } catch (error) {
+      console.error(error);
+      toast.error('Неверный логин или пароль');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none -z-10">
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-500/10 rounded-full blur-[120px]" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-indigo-500/10 rounded-full blur-[120px]" />
+      </div>
+
+      <div className="w-full max-w-[480px] bg-white rounded-[3rem] shadow-soft-xl border border-slate-100 overflow-hidden">
+        <div className="p-12">
+          <div className="text-center mb-10">
+            <div className="w-20 h-20 bg-blue-500 rounded-3xl flex items-center justify-center text-white mx-auto mb-6 shadow-soft-lg rotate-3">
+              <Lock size={36} />
+            </div>
+            <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-2">Авторизация</h1>
+            <p className="text-slate-500 font-medium italic">Система учета UC-HET-ZP</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label className="block text-sm font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Логин</label>
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                  <User size={20} />
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800 font-bold"
+                  placeholder="admin"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Пароль</label>
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                  <Lock size={20} />
+                </div>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800 font-bold"
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-slate-800 transition-soft shadow-soft-lg flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed mt-10"
+            >
+              {loading ? <Loader2 className="animate-spin" size={24} /> : 'Войти в систему'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Login;
+</file>
+
 <file path="frontend/src/pages/Payroll.jsx">
 // pages/Payroll.jsx - Modern Professional Payslip Design
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -5580,20 +6093,6 @@ if __name__ == "__main__":
 
 <file path="vercel.json">
 {
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/backend/main.py"
-    },
-    {
-      "source": "/assets/(.*)",
-      "destination": "/frontend/assets/$1"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/frontend/index.html"
-    }
-  ],
   "builds": [
     {
       "src": "backend/main.py",
@@ -5605,6 +6104,28 @@ if __name__ == "__main__":
       "config": {
         "distDir": "dist"
       }
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/sound.mp3",
+      "destination": "/frontend/sound.mp3"
+    },
+    {
+      "source": "/assets/(.*)",
+      "destination": "/frontend/assets/$1"
+    },
+    {
+      "source": "/((?!api/).*\\.[^/]+)$",
+      "destination": "/frontend/$1"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/frontend/index.html"
     }
   ]
 }

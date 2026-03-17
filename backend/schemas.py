@@ -82,8 +82,8 @@ class FinancialTransactionBase(BaseModel):
     """Базовые поля финансовой транзакции."""
     employee_id: int
     type: TransactionType
-    amount: float = Field(default=0.0, ge=0, description="Сумма в гривнах")
-    points_count: Optional[float] = Field(None, ge=0, description="Количество очков")
+    amount: float = Field(default=0.0, description="Сумма в гривнах")
+    points_count: Optional[float] = Field(None, description="Количество очков")
     comment: Optional[str] = Field(None, description="Комментарий")
     date: str  # Формат: YYYY-MM-DD
 
