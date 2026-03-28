@@ -2065,8 +2065,9 @@ export const getAttendanceJournal = async (startDate, endDate) => {
 
 export const updateAttendance = async (id, inTime, outTime) => {
   const payload = {};
-  if (inTime) payload.in_time = inTime;
-  if (outTime) payload.out_time = outTime;
+  // Проверяем именно на undefined, чтобы null (удаление) тоже попадал в payload
+  if (inTime !== undefined) payload.in_time = inTime;
+  if (outTime !== undefined) payload.out_time = outTime;
 
   const response = await api.put(`/api/attendance/${id}`, payload);
   return response.data;

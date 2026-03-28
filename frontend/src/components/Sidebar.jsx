@@ -1,7 +1,7 @@
 // components/Sidebar.jsx - Modern Soft UI Sidebar
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, LayoutDashboard, BookUser, Users, Calculator, ChevronLeft, ChevronRight, Building2, LogOut } from 'lucide-react';
+import { Menu, X, LayoutDashboard, BookUser, Users, Calculator, ChevronLeft, ChevronRight, Building2, LogOut, Camera } from 'lucide-react';
 
 const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -12,6 +12,7 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
     { path: '/journal', icon: BookUser, label: 'Журнал' },
     { path: '/employees', icon: Users, label: 'Сотрудники' },
     { path: '/payroll', icon: Calculator, label: 'Зарплата' },
+    { path: '/camera', icon: Camera, label: 'Камера' },
   ];
 
   const isActive = (path) => location.pathname === path;

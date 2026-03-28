@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +11,7 @@ from typing import List
 from datetime import datetime
 from pydantic import BaseModel
 import calendar
+import base64
 
 import database
 import models
@@ -163,7 +164,8 @@ def get_attendance_journal(
             "employee_name": record.employee.name if record.employee else "Неизвестная карта",
             "in_time": in_time_str,
             "out_time": out_time_str,
-            "total_hours": total_hours
+            "total_hours": total_hours,
+            "photo_base64": record.photo_base64
         })
     return result
 
@@ -526,6 +528,78 @@ def get_employee_transactions(
             models.FinancialTransaction.employee_id == employee_id
         ).order_by(models.FinancialTransaction.date.desc()).all()
     return transactions
+
+
+# ========== ЭНДПОИНТЫ ДЛЯ СКАНЕРА (ESP32-S3) ==========
+
+@app.get("/api/scanner/employees", response_model=List[str])
+def get_scanner_employees(db: Session = Depends(database.get_db)):
+    """Получить список имен всех сотрудников для отображения на экране платы."""
+    employees = crud.get_employees(db)
+    return [e.name for e in employees]
+
+
+@app.post("/api/scanner/motion", status_code=status.HTTP_201_CREATED)
+def record_motion_event(event: schemas.MotionEventCreate, db: Session = Depends(database.get_db)):
+    """Записать событие обнаружения движения."""
+    return crud.create_motion_event(db, event)
+
+
+@app.get("/api/scanner/motion", response_model=List[schemas.MotionEventResponse])
+def get_motion_events(skip: int = 0, limit: int = 50, db: Session = Depends(database.get_db)):
+    """Получить список последних событий движения."""
+    return crud.get_motion_events(db, skip=skip, limit=limit)
+
+
+@app.post("/api/scanner/scan", status_code=status.HTTP_200_OK)
+async def scan_with_photo(request: Request, db: Session = Depends(database.get_db)):
+    """Специальный эндпоинт для сканера с камерой (принимает бинарник JPEG)."""
+    card_id = request.headers.get("X-Card-ID")
+    if not card_id:
+        raise HTTPException(status_code=400, detail="Missing X-Card-ID header")
+    
+    body = await request.body()
+    encoded_photo = f"data:image/jpeg;base64,{base64.b64encode(body).decode('utf-8')}"
+    
+    # Поиск сотрудника
+    employee = crud.get_employee_by_card(db, card_id)
+    if not employee:
+        # Для режима ввода новых карт: перехватываем скан в память
+        global latest_scanned_card
+        latest_scanned_card = card_id
+        return {"status": "unknown_card_intercepted", "card_id": card_id}
+
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    
+    # Ищем существующую запись
+    attendance_record = crud.get_attendance_by_employee_and_date(db, employee.id, today_str)
+
+    if not attendance_record:
+        # Приход
+        new_attendance = schemas.AttendanceCreate(
+            employee_id=employee.id,
+            date=today_str,
+            in_time=now,
+            out_time=None,
+            photo_base64=encoded_photo
+        )
+        crud.create_attendance(db, new_attendance)
+        return {"status": "checked_in", "employee_name": employee.name}
+    
+    # Уход
+    # Проверка debounce
+    if attendance_record.out_time is None:
+        if (now - attendance_record.in_time).total_seconds() < 60:
+             return {"status": "debounced"}
+    else:
+        if (now - attendance_record.out_time).total_seconds() < 60:
+             return {"status": "debounced"}
+
+    attendance_record.out_time = now
+    attendance_record.photo_base64 = encoded_photo
+    db.commit()
+    return {"status": "checked_out" if not attendance_record.out_time else "re_checked_out", "employee_name": employee.name}
 
 
 # ========== ЭНДПОИНТЫ ДЛЯ СМАРТ-НАСТРОЙКИ ==========

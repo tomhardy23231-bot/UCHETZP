@@ -126,4 +126,11 @@ export const adjustPoints = async (employeeId, month, targetPoints) => {
   return response.data;
 };
 
+// ========== СКАНЕР ==========
+
+export const getMotionEvents = async (limit = 20) => {
+  const response = await api.get(`/api/scanner/motion?limit=${limit}`);
+  return response.data;
+};
+
 export default api;
