@@ -6,7 +6,6 @@ import Dashboard from './pages/Dashboard';
 import Journal from './pages/Journal';
 import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
-import CameraStream from './pages/CameraStream';
 import NotificationManager from './components/NotificationManager';
 
 function App() {
@@ -26,7 +25,6 @@ function App() {
             <Route path="/journal" element={<Journal />} />
             <Route path="/employees" element={<Employees />} />
             <Route path="/payroll" element={<Payroll />} />
-            <Route path="/camera" element={<CameraStream />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

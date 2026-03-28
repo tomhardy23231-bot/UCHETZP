@@ -124,8 +124,7 @@ def create_attendance(db: Session, attendance: schemas.AttendanceCreate) -> mode
         employee_id=attendance.employee_id,
         date=attendance.date,
         in_time=attendance.in_time,
-        out_time=attendance.out_time,
-        photo_base64=attendance.photo_base64
+        out_time=attendance.out_time
     )
     db.add(db_attendance)
     db.commit()
@@ -202,22 +201,6 @@ def delete_transaction(db: Session, transaction_id: int) -> bool:
         db.commit()
         return True
     return False
-
-
-# ========== CRUD ДЛЯ СОБЫТИЙ ДВИЖЕНИЯ ==========
-
-def create_motion_event(db: Session, event: schemas.MotionEventCreate) -> models.MotionEvent:
-    """Создать событие движения."""
-    db_event = models.MotionEvent(camera_name=event.camera_name)
-    db.add(db_event)
-    db.commit()
-    db.refresh(db_event)
-    return db_event
-
-
-def get_motion_events(db: Session, skip: int = 0, limit: int = 50) -> List[models.MotionEvent]:
-    """Получить список событий движения."""
-    return db.query(models.MotionEvent).order_by(models.MotionEvent.timestamp.desc()).offset(skip).limit(limit).all()
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========

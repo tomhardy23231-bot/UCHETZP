@@ -1,6 +1,6 @@
 // components/TableView.jsx
-import React, { useState } from 'react';
-import { Calendar, Clock, UserCheck, UserX, Info, UserRound, Camera, X } from 'lucide-react';
+import React from 'react';
+import { Calendar, Clock, UserCheck, UserX, Info, UserRound } from 'lucide-react';
 
 const TableView = ({
   employees,
@@ -17,8 +17,6 @@ const TableView = ({
   getAvatarColor,
   selectedMonth,
 }) => {
-  const [selectedPhoto, setSelectedPhoto] = useState(null);
-
   return (
     <div className="bg-white rounded-2xl shadow-soft overflow-hidden">
       <div className="overflow-auto max-h-[calc(100vh-200px)]">
@@ -34,7 +32,7 @@ const TableView = ({
               </th>
 
               {employees.map((emp, empIndex) => (
-                <th key={emp.id} colSpan={4} className={`px-2 py-3 text-center font-semibold text-slate-700 border-b-2 border-l border-slate-200 min-w-[180px] ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
+                <th key={emp.id} colSpan={3} className={`px-2 py-3 text-center font-semibold text-slate-700 border-b-2 border-l border-slate-200 min-w-[140px] ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
                   <div className="flex flex-col items-center gap-1">
                     <div className={`w-6 h-6 ${getAvatarColor(emp.name)} rounded-full flex items-center justify-center text-white text-xs font-bold`}>
                       {emp.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
@@ -46,7 +44,7 @@ const TableView = ({
               ))}
             </tr>
 
-            {/* Subheader - In | Out | Time | Photo */}
+            {/* Subheader - In | Out | Time */}
             <tr className="bg-slate-50">
               <th className="sticky left-0 bg-slate-50 z-30 px-3 py-2 text-left font-medium text-slate-600 border-b border-r border-slate-200"></th>
               {employees.map((emp, empIndex) => (
@@ -67,12 +65,6 @@ const TableView = ({
                     <div className="flex flex-col items-center">
                       <Clock size={12} />
                       <span>Часы</span>
-                    </div>
-                  </th>
-                  <th className={`px-1 py-2 text-center text-xs font-medium text-blue-700 border-b border-slate-200 ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
-                    <div className="flex flex-col items-center">
-                      <Camera size={12} />
-                      <span>Фото</span>
                     </div>
                   </th>
                 </React.Fragment>
@@ -154,22 +146,6 @@ const TableView = ({
                           {duration || '—'}
                         </div>
                       </td>
-
-                      {/* Photo Thumbnail */}
-                      <td className={`px-1 py-1 border-l border-slate-200 text-center ${colBg}`}>
-                        {record?.photo_base64 ? (
-                          <button 
-                            onClick={() => setSelectedPhoto(record.photo_base64)}
-                            className="w-8 h-8 rounded-full overflow-hidden border-2 border-white shadow-soft hover:shadow-soft-lg hover:scale-110 transition-soft active:scale-95 mx-auto block"
-                          >
-                            <img src={record.photo_base64} alt="Scan" className="w-full h-full object-cover" />
-                          </button>
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-300 mx-auto">
-                            <Camera size={14} />
-                          </div>
-                        )}
-                      </td>
                     </React.Fragment>
                   );
                 })}
@@ -178,37 +154,6 @@ const TableView = ({
           </tbody>
         </table>
       </div>
-
-      {/* Photo Modal */}
-      {selectedPhoto && (
-        <div 
-          className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => setSelectedPhoto(null)}
-        >
-          <div 
-            className="relative bg-white p-2 rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            <button 
-              onClick={() => setSelectedPhoto(null)}
-              className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors z-10"
-            >
-              <X size={24} />
-            </button>
-            <img 
-              src={selectedPhoto} 
-              alt="Scan Large" 
-              className="w-full h-auto rounded-2xl shadow-inner"
-            />
-            <div className="p-4 text-center">
-              <p className="text-slate-500 text-sm font-medium flex items-center justify-center gap-2">
-                <Camera size={16} />
-                Фото с терминала доступа
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Info Footer - Modern Soft UI */}
       <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap justify-between items-center gap-3 text-sm">

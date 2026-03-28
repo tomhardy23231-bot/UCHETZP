@@ -1,5 +1,5 @@
 # models.py - Модели базы данных (SQLAlchemy)
-from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, ForeignKey, UniqueConstraint, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -42,18 +42,9 @@ class Attendance(Base):
     date = Column(String, nullable=False, index=True)  # Дата в формате YYYY-MM-DD
     in_time = Column(DateTime, nullable=False)  # Время прихода
     out_time = Column(DateTime, nullable=True)  # Время ухода (может быть пустым)
-    photo_base64 = Column(Text, nullable=True)  # Фото в формате base64
 
     # Связь с сотрудником
     employee = relationship("Employee", back_populates="attendance_records")
-
-
-class MotionEvent(Base):
-    """Модель событий движения от PIR-датчика."""
-    __tablename__ = "motion_events"
-    id = Column(Integer, primary_key=True, index=True)
-    camera_name = Column(String, default="Главный вход")
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class FinancialTransaction(Base):
