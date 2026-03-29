@@ -252,6 +252,18 @@ def scan_card_for_attendance(
     # Ищем существующую запись за дату сканирования
     attendance_record = crud.get_attendance_by_employee_and_date(db, employee.id, today_str)
 
+    if attendance_record:
+        # Проверка на точный дубликат (сетевая переотправка при обрыве связи)
+        # Если время совпадает (абсолютно равно) с in_time или out_time
+        if (attendance_record.in_time and now == attendance_record.in_time) or \
+           (attendance_record.out_time and now == attendance_record.out_time):
+            return {
+                "status": "duplicate",
+                "employee_name": employee.name,
+                "time": now,
+                "message": "Скан уже принят ранее"
+            }
+
     if not attendance_record:
         # Сценарий A: Приход (первое сканирование за день)
         new_attendance = schemas.AttendanceCreate(
