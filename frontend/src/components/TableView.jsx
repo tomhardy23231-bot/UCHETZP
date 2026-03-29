@@ -1,6 +1,6 @@
 // components/TableView.jsx
 import React from 'react';
-import { Calendar, Clock, UserCheck, UserX, Info, UserRound } from 'lucide-react';
+import { Calendar, Clock, UserCheck, UserX, Info, UserRound, Camera } from 'lucide-react';
 
 const TableView = ({
   employees,
@@ -16,6 +16,7 @@ const TableView = ({
   calculateDuration,
   getAvatarColor,
   selectedMonth,
+  onPhotoClick,
 }) => {
   return (
     <div className="bg-white rounded-2xl shadow-soft overflow-hidden">
@@ -32,7 +33,7 @@ const TableView = ({
               </th>
 
               {employees.map((emp, empIndex) => (
-                <th key={emp.id} colSpan={3} className={`px-2 py-3 text-center font-semibold text-slate-700 border-b-2 border-l border-slate-200 min-w-[140px] ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
+                <th key={emp.id} colSpan={4} className={`px-2 py-3 text-center font-semibold text-slate-700 border-b-2 border-l border-slate-200 min-w-[170px] ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
                   <div className="flex flex-col items-center gap-1">
                     <div className={`w-6 h-6 ${getAvatarColor(emp.name)} rounded-full flex items-center justify-center text-white text-xs font-bold`}>
                       {emp.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
@@ -65,6 +66,12 @@ const TableView = ({
                     <div className="flex flex-col items-center">
                       <Clock size={12} />
                       <span>Часы</span>
+                    </div>
+                  </th>
+                  <th className={`px-1 py-2 text-center text-xs font-medium text-purple-700 border-b border-slate-200 ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
+                    <div className="flex flex-col items-center">
+                      <Camera size={12} />
+                      <span>Фото</span>
                     </div>
                   </th>
                 </React.Fragment>
@@ -144,6 +151,25 @@ const TableView = ({
                       <td className={`px-1 py-1 border-l border-slate-200 text-center ${colBg}`}>
                         <div className={`text-xs font-medium rounded-lg p-1.5 ${duration ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}`}>
                           {duration || '—'}
+                        </div>
+                      </td>
+
+                      {/* Photo Thumbnail */}
+                      <td className={`px-1 py-1 border-l border-slate-200 text-center ${colBg}`}>
+                        <div className="flex justify-center items-center h-full">
+                          {record?.photo_url ? (
+                            <img
+                              src={record.photo_url}
+                              alt="Скан"
+                              className="w-[28px] h-[28px] object-cover rounded-md shadow-sm cursor-pointer hover:opacity-80 transition-opacity ring-1 ring-slate-200"
+                              title="Посмотреть фото"
+                              onClick={() => {
+                                if (onPhotoClick) onPhotoClick(record.photo_url);
+                              }}
+                            />
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
                         </div>
                       </td>
                     </React.Fragment>

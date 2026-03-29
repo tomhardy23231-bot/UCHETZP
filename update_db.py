@@ -15,8 +15,9 @@ def update_database():
         
         # Raw SQL queries to run
         queries = [
-            # 1. Add photo column to attendance table
+            # 1. Add photo columns to attendance table
             "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS photo_base64 TEXT;",
+            "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS photo_url TEXT;",
             
             # 2. Create motion_events table
             """
