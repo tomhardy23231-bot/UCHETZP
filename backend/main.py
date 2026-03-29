@@ -17,7 +17,7 @@ import models
 import schemas
 import crud
 
-# Глобальная переменная для перехвата сканирований неизвестных карт (в режиме ввода карт)
+# Глобальная переменная для временного хранения ID неизвестной карты (для регистрации новых сотрудников)
 latest_scanned_card = None
 
 # Создаём таблицы в базе данных
@@ -171,7 +171,8 @@ def get_attendance_journal(
 @app.get("/api/attendance/latest", response_model=schemas.LatestAttendanceResponse)
 def get_latest_attendance():
     """
-    Получить самый свежий скан (из памяти) для режима ввода новых карт.
+    Получить ID недавно считанной неизвестной карты из временной памяти.
+    Это используется при регистрации новых сотрудников.
     После прочтения значение в памяти очищается.
     """
     global latest_scanned_card
@@ -244,9 +245,9 @@ def scan_card_for_attendance(
     today_str = now.strftime("%Y-%m-%d")
 
     if not employee:
-        # Для режима ввода новых карт: перехватываем скан в память без записи в БД
+        # Для режима добавления новых сотрудников: временно сохраняем ID карты в памяти
         latest_scanned_card = card_id
-        return {"status": "unknown_card_intercepted", "card_id": card_id, "time": now}
+        return {"status": "unknown_card_stored", "card_id": card_id, "time": now}
 
     # Ищем существующую запись за дату сканирования
     attendance_record = crud.get_attendance_by_employee_and_date(db, employee.id, today_str)
