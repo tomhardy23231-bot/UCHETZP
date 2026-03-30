@@ -50,7 +50,6 @@ class AttendanceBase(BaseModel):
     date: str  # Формат: YYYY-MM-DD
     in_time: datetime
     out_time: Optional[datetime] = None
-    photo_url: Optional[str] = None
 
 
 class AttendanceCreate(AttendanceBase):
@@ -153,7 +152,6 @@ class JournalEntry(BaseModel):
     in_time: str
     out_time: Optional[str] = None
     total_hours: Optional[float] = None
-    photo_url: Optional[str] = None
 
     class Config:
         from_attributes = True

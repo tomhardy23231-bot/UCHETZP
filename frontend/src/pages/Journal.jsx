@@ -18,7 +18,6 @@ const Journal = () => {
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'table'
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEmployeeForModal, setSelectedEmployeeForModal] = useState(null);
-  const [photoModalUrl, setPhotoModalUrl] = useState(null);
 
   const handleCardClick = (employee) => {
     setSelectedEmployeeForModal(employee);
@@ -328,7 +327,6 @@ const Journal = () => {
           calculateDuration={calculateDuration}
           getAvatarColor={getAvatarColor}
           selectedMonth={selectedMonth}
-          onPhotoClick={setPhotoModalUrl}
         />
       )}
 
@@ -349,7 +347,6 @@ const Journal = () => {
           getDaysInMonth={getDaysInMonth}
           getRecord={getRecord}
           onCardClick={handleCardClick}
-          onPhotoClick={setPhotoModalUrl}
         />
       )}
 
@@ -371,20 +368,6 @@ const Journal = () => {
         />
       )}
 
-      {/* Lightbox for Photos */}
-      {photoModalUrl && (
-        <div 
-          className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 cursor-pointer"
-          onClick={() => setPhotoModalUrl(null)}
-        >
-          <img 
-            src={photoModalUrl} 
-            alt="Фото с камеры" 
-            className="max-w-[95vw] max-h-[95vh] object-contain rounded-2xl shadow-2xl border-4 border-white transform scale-100 transition-transform duration-300"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
     </div>
   );
 };

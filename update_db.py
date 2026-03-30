@@ -15,19 +15,7 @@ def update_database():
         
         # Raw SQL queries to run
         queries = [
-            # 1. Add photo columns to attendance table
-            "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS photo_base64 TEXT;",
-            "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS photo_url TEXT;",
-            
-            # 2. Create motion_events table
-            """
-            CREATE TABLE IF NOT EXISTS motion_events (
-                id SERIAL PRIMARY KEY,
-                camera_name VARCHAR(255) DEFAULT 'Главный вход',
-                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-            );
-            """,
-            # 3. Create scan_logs table
+            # 1. Create scan_logs table
             """
             CREATE TABLE IF NOT EXISTS scan_logs (
                 id SERIAL PRIMARY KEY,

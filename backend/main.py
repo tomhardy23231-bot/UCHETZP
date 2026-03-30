@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Depends, HTTPException, status, File, Form, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -11,15 +11,6 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 import calendar
-import cloudinary
-import cloudinary.uploader
-
-# Настройка Cloudinary
-cloudinary.config(
-    cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
-    api_key=os.getenv('CLOUDINARY_API_KEY'),
-    api_secret=os.getenv('CLOUDINARY_API_SECRET')
-)
 
 import database
 import models
@@ -172,8 +163,7 @@ def get_attendance_journal(
             "employee_name": record.employee.name if record.employee else "Неизвестная карта",
             "in_time": in_time_str,
             "out_time": out_time_str,
-            "total_hours": total_hours,
-            "photo_url": record.photo_url
+            "total_hours": total_hours
         })
     return result
 
@@ -311,59 +301,7 @@ def scan_card_for_attendance(
         return {"status": "re_checked_out", "employee_name": employee.name, "time": now}
 
 
-@app.post("/api/attendance/scan-with-photo", status_code=status.HTTP_200_OK)
-def scan_card_with_photo(
-    card_id: str = Form(...),
-    timestamp: Optional[str] = Form(None),
-    file: UploadFile = File(...),
-    db: Session = Depends(database.get_db)
-):
-    """
-    Обработка сканирования карты с фотофиксацией.
-    """
-    # 1. Загружаем фото в Cloudinary
-    photo_url = None
-    try:
-        upload_result = cloudinary.uploader.upload(
-            file.file, 
-            folder="skud_photos"
-        )
-        photo_url = upload_result.get("secure_url")
-    except Exception as e:
-        print(f"Cloudinary Error: {e}")
 
-    # 2. Парсим timestamp
-    dt_timestamp = None
-    if timestamp:
-        try:
-            dt_timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        except ValueError:
-            pass
-
-    scan_request = schemas.CardScanRequest(
-        card_id=card_id,
-        timestamp=dt_timestamp
-    )
-    
-    # 3. Вызываем основную логику отметки
-    res = scan_card_for_attendance(scan_request, db)
-    
-    # 4. Если отметка успешна или это дубликат, а фото загружено, прикрепляем его
-    if photo_url:
-        employee = crud.get_employee_by_card(db, card_id)
-        if employee:
-            now = dt_timestamp if dt_timestamp else datetime.now()
-            if now.tzinfo is not None:
-                now = now.replace(tzinfo=None)
-            today_str = now.strftime("%Y-%m-%d")
-            
-            attendance_record = crud.get_attendance_by_employee_and_date(db, employee.id, today_str)
-            if attendance_record:
-                attendance_record.photo_url = photo_url
-                db.commit()
-                res["photo_url"] = photo_url
-                
-    return res
 
 
 @app.post("/api/attendance/bulk-scan", status_code=status.HTTP_200_OK)

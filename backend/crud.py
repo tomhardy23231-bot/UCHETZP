@@ -124,8 +124,7 @@ def create_attendance(db: Session, attendance: schemas.AttendanceCreate) -> mode
         employee_id=attendance.employee_id,
         date=attendance.date,
         in_time=attendance.in_time,
-        out_time=attendance.out_time,
-        photo_url=attendance.photo_url
+        out_time=attendance.out_time
     )
     db.add(db_attendance)
     db.commit()

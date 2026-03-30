@@ -228,7 +228,8 @@ def create_attendance(db: Session, attendance: schemas.AttendanceCreate) -> mode
         employee_id=attendance.employee_id,
         date=attendance.date,
         in_time=attendance.in_time,
-        out_time=attendance.out_time
+        out_time=attendance.out_time,
+        photo_url=attendance.photo_url
     )
     db.add(db_attendance)
     db.commit()
@@ -396,14 +397,23 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 import calendar
+import cloudinary
+import cloudinary.uploader
+
+# Настройка Cloudinary
+cloudinary.config(
+    cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.getenv('CLOUDINARY_API_KEY'),
+    api_secret=os.getenv('CLOUDINARY_API_SECRET')
+)
 
 import database
 import models
@@ -556,7 +566,8 @@ def get_attendance_journal(
             "employee_name": record.employee.name if record.employee else "Неизвестная карта",
             "in_time": in_time_str,
             "out_time": out_time_str,
-            "total_hours": total_hours
+            "total_hours": total_hours,
+            "photo_url": record.photo_url
         })
     return result
 
@@ -692,6 +703,61 @@ def scan_card_for_attendance(
         db.commit()
         db.refresh(attendance_record)
         return {"status": "re_checked_out", "employee_name": employee.name, "time": now}
+
+
+@app.post("/api/attendance/scan-with-photo", status_code=status.HTTP_200_OK)
+def scan_card_with_photo(
+    card_id: str = Form(...),
+    timestamp: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(database.get_db)
+):
+    """
+    Обработка сканирования карты с фотофиксацией.
+    """
+    # 1. Загружаем фото в Cloudinary
+    photo_url = None
+    try:
+        upload_result = cloudinary.uploader.upload(
+            file.file, 
+            folder="skud_photos"
+        )
+        photo_url = upload_result.get("secure_url")
+    except Exception as e:
+        print(f"Cloudinary Error: {e}")
+
+    # 2. Парсим timestamp
+    dt_timestamp = None
+    if timestamp:
+        try:
+            dt_timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        except ValueError:
+            pass
+
+    scan_request = schemas.CardScanRequest(
+        card_id=card_id,
+        timestamp=dt_timestamp
+    )
+    
+    # 3. Вызываем основную логику отметки
+    res = scan_card_for_attendance(scan_request, db)
+    
+    # 4. Если отметка успешна или это дубликат, а фото загружено, прикрепляем его
+    if photo_url:
+        employee = crud.get_employee_by_card(db, card_id)
+        if employee:
+            now = dt_timestamp if dt_timestamp else datetime.now()
+            if now.tzinfo is not None:
+                now = now.replace(tzinfo=None)
+            today_str = now.strftime("%Y-%m-%d")
+            
+            attendance_record = crud.get_attendance_by_employee_and_date(db, employee.id, today_str)
+            if attendance_record:
+                attendance_record.photo_url = photo_url
+                db.commit()
+                res["photo_url"] = photo_url
+                
+    return res
 
 
 @app.post("/api/attendance/bulk-scan", status_code=status.HTTP_200_OK)
@@ -1175,6 +1241,7 @@ class Attendance(Base):
     date = Column(String, nullable=False, index=True)  # Дата в формате YYYY-MM-DD
     in_time = Column(DateTime, nullable=False)  # Время прихода
     out_time = Column(DateTime, nullable=True)  # Время ухода (может быть пустым)
+    photo_url = Column(String, nullable=True)  # Ссылка на фото со сканера
 
     # Связь с сотрудником
     employee = relationship("Employee", back_populates="attendance_records")
@@ -1225,6 +1292,7 @@ pydantic==2.10.4
 python-multipart==0.0.20
 requests==2.32.3
 psycopg2-binary==2.9.9
+cloudinary==1.38.0
 </file>
 
 <file path="backend/schemas.py">
@@ -1280,6 +1348,7 @@ class AttendanceBase(BaseModel):
     date: str  # Формат: YYYY-MM-DD
     in_time: datetime
     out_time: Optional[datetime] = None
+    photo_url: Optional[str] = None
 
 
 class AttendanceCreate(AttendanceBase):
@@ -1382,6 +1451,7 @@ class JournalEntry(BaseModel):
     in_time: str
     out_time: Optional[str] = None
     total_hours: Optional[float] = None
+    photo_url: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -3053,7 +3123,7 @@ export default SubscriptionGuard;
 <file path="frontend/src/components/TableView.jsx">
 // components/TableView.jsx
 import React from 'react';
-import { Calendar, Clock, UserCheck, UserX, Info, UserRound } from 'lucide-react';
+import { Calendar, Clock, UserCheck, UserX, Info, UserRound, Camera } from 'lucide-react';
 
 const TableView = ({
   employees,
@@ -3069,6 +3139,7 @@ const TableView = ({
   calculateDuration,
   getAvatarColor,
   selectedMonth,
+  onPhotoClick,
 }) => {
   return (
     <div className="bg-white rounded-2xl shadow-soft overflow-hidden">
@@ -3085,7 +3156,7 @@ const TableView = ({
               </th>
 
               {employees.map((emp, empIndex) => (
-                <th key={emp.id} colSpan={3} className={`px-2 py-3 text-center font-semibold text-slate-700 border-b-2 border-l border-slate-200 min-w-[140px] ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
+                <th key={emp.id} colSpan={4} className={`px-2 py-3 text-center font-semibold text-slate-700 border-b-2 border-l border-slate-200 min-w-[170px] ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
                   <div className="flex flex-col items-center gap-1">
                     <div className={`w-6 h-6 ${getAvatarColor(emp.name)} rounded-full flex items-center justify-center text-white text-xs font-bold`}>
                       {emp.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
@@ -3118,6 +3189,12 @@ const TableView = ({
                     <div className="flex flex-col items-center">
                       <Clock size={12} />
                       <span>Часы</span>
+                    </div>
+                  </th>
+                  <th className={`px-1 py-2 text-center text-xs font-medium text-purple-700 border-b border-slate-200 ${empIndex % 2 === 0 ? 'bg-slate-50' : 'bg-blue-50'}`}>
+                    <div className="flex flex-col items-center">
+                      <Camera size={12} />
+                      <span>Фото</span>
                     </div>
                   </th>
                 </React.Fragment>
@@ -3197,6 +3274,25 @@ const TableView = ({
                       <td className={`px-1 py-1 border-l border-slate-200 text-center ${colBg}`}>
                         <div className={`text-xs font-medium rounded-lg p-1.5 ${duration ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}`}>
                           {duration || '—'}
+                        </div>
+                      </td>
+
+                      {/* Photo Thumbnail */}
+                      <td className={`px-1 py-1 border-l border-slate-200 text-center ${colBg}`}>
+                        <div className="flex justify-center items-center h-full">
+                          {record?.photo_url ? (
+                            <img
+                              src={record.photo_url}
+                              alt="Скан"
+                              className="w-[28px] h-[28px] object-cover rounded-md shadow-sm cursor-pointer hover:opacity-80 transition-opacity ring-1 ring-slate-200"
+                              title="Посмотреть фото"
+                              onClick={() => {
+                                if (onPhotoClick) onPhotoClick(record.photo_url);
+                              }}
+                            />
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
                         </div>
                       </td>
                     </React.Fragment>
@@ -4891,6 +4987,7 @@ const Journal = () => {
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'table'
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEmployeeForModal, setSelectedEmployeeForModal] = useState(null);
+  const [photoModalUrl, setPhotoModalUrl] = useState(null);
 
   const handleCardClick = (employee) => {
     setSelectedEmployeeForModal(employee);
@@ -5200,6 +5297,7 @@ const Journal = () => {
           calculateDuration={calculateDuration}
           getAvatarColor={getAvatarColor}
           selectedMonth={selectedMonth}
+          onPhotoClick={setPhotoModalUrl}
         />
       )}
 
@@ -5220,6 +5318,7 @@ const Journal = () => {
           getDaysInMonth={getDaysInMonth}
           getRecord={getRecord}
           onCardClick={handleCardClick}
+          onPhotoClick={setPhotoModalUrl}
         />
       )}
 
@@ -5239,6 +5338,21 @@ const Journal = () => {
           isValidHHMM={isValidHHMM}
           calculateDuration={calculateDuration}
         />
+      )}
+
+      {/* Lightbox for Photos */}
+      {photoModalUrl && (
+        <div 
+          className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setPhotoModalUrl(null)}
+        >
+          <img 
+            src={photoModalUrl} 
+            alt="Фото с камеры" 
+            className="max-w-[95vw] max-h-[95vh] object-contain rounded-2xl shadow-2xl border-4 border-white transform scale-100 transition-transform duration-300"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

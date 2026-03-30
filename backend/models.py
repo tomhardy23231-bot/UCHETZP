@@ -42,7 +42,6 @@ class Attendance(Base):
     date = Column(String, nullable=False, index=True)  # Дата в формате YYYY-MM-DD
     in_time = Column(DateTime, nullable=False)  # Время прихода
     out_time = Column(DateTime, nullable=True)  # Время ухода (может быть пустым)
-    photo_url = Column(String, nullable=True)  # Ссылка на фото со сканера
 
     # Связь с сотрудником
     employee = relationship("Employee", back_populates="attendance_records")
