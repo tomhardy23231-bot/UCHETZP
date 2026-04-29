@@ -173,3 +173,21 @@ class BulkScanRequest(BaseModel):
 class LatestAttendanceResponse(BaseModel):
     """Схема ответа для последнего скана (режим ввода карт)."""
     card_id: str
+
+
+# ========== СХЕМЫ ДЛЯ ЛОГОВ ==========
+
+class AttendanceLogEntry(BaseModel):
+    """Запись лога сканирования."""
+    id: int
+    received_at: datetime
+    card_id: str
+    scan_timestamp: Optional[datetime] = None
+    employee_id: Optional[int] = None
+    employee_name: Optional[str] = None
+    status: str
+    result: str  # 'success' | 'warning' | 'error'
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True

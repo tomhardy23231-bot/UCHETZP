@@ -81,3 +81,18 @@ class SalarySnapshot(Base):
     __table_args__ = (
         UniqueConstraint('employee_id', 'month', name='_employee_month_uc'),
     )
+
+
+class AttendanceLog(Base):
+    """Модель логов сканирований (успехи и ошибки) - для просмотра администратором."""
+    __tablename__ = "attendance_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    received_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)  # когда сервер получил
+    card_id = Column(String, nullable=False, index=True)  # ID карты которую отсканировали
+    scan_timestamp = Column(DateTime, nullable=True)  # время с самого сканера (когда было сканирование)
+    employee_id = Column(Integer, nullable=True)  # ID сотрудника (если карта была опознана)
+    employee_name = Column(String, nullable=True)  # ФИО снимок (на момент скана)
+    status = Column(String, nullable=False, index=True)  # checked_in / checked_out / re_checked_out / debounced / duplicate / unknown_card / error
+    result = Column(String, nullable=False, index=True)  # success / warning / error
+    message = Column(String, nullable=True)  # человеческое объяснение причины

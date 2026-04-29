@@ -126,4 +126,21 @@ export const adjustPoints = async (employeeId, month, targetPoints) => {
   return response.data;
 };
 
+// ========== ЛОГИ СКАНИРОВАНИЙ ==========
+
+export const getScanLogs = async (result = null, limit = 200) => {
+  const params = new URLSearchParams();
+  if (result) params.append('result', result);
+  params.append('limit', limit);
+  const response = await api.get(`/api/scan-logs?${params}`);
+  return response.data;
+};
+
+export const clearScanLogs = async (olderThanDays = null) => {
+  const params = new URLSearchParams();
+  if (olderThanDays !== null) params.append('older_than_days', olderThanDays);
+  const response = await api.delete(`/api/scan-logs?${params}`);
+  return response.data;
+};
+
 export default api;

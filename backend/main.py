@@ -222,6 +222,24 @@ def create_attendance_record(attendance: schemas.AttendanceCreate, db: Session =
     return crud.create_attendance(db=db, attendance=attendance)
 
 
+def _write_log(db: Session, *, card_id: str, scan_timestamp, employee, status_str: str, result: str, message: str):
+    """Пишет запись в журнал сканирований. Не падает, если запись не удалась."""
+    try:
+        log = models.AttendanceLog(
+            card_id=card_id,
+            scan_timestamp=scan_timestamp,
+            employee_id=employee.id if employee else None,
+            employee_name=employee.name if employee else None,
+            status=status_str,
+            result=result,
+            message=message,
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 @app.post("/api/attendance/scan", status_code=status.HTTP_200_OK)
 def scan_card_for_attendance(
     request: schemas.CardScanRequest,
@@ -237,16 +255,19 @@ def scan_card_for_attendance(
 
     # Используем переданное время или текущее
     now = request.timestamp if request.timestamp else datetime.now()
-    
+
     # Если в БД используются naive datetime, конвертируем
     if now.tzinfo is not None:
         now = now.replace(tzinfo=None)
-        
+
     today_str = now.strftime("%Y-%m-%d")
 
     if not employee:
         # Для режима добавления новых сотрудников: временно сохраняем ID карты в памяти
         latest_scanned_card = card_id
+        _write_log(db, card_id=card_id, scan_timestamp=now, employee=None,
+                   status_str="unknown_card", result="warning",
+                   message=f"Карта {card_id} не привязана ни к одному сотруднику")
         return {"status": "unknown_card_stored", "card_id": card_id, "time": now}
 
     # Ищем существующую запись за дату сканирования
@@ -257,6 +278,9 @@ def scan_card_for_attendance(
         # Если время совпадает (абсолютно равно) с in_time или out_time
         if (attendance_record.in_time and now == attendance_record.in_time) or \
            (attendance_record.out_time and now == attendance_record.out_time):
+            _write_log(db, card_id=card_id, scan_timestamp=now, employee=employee,
+                       status_str="duplicate", result="warning",
+                       message="Точный дубликат - такой скан уже был принят ранее")
             return {
                 "status": "duplicate",
                 "employee_name": employee.name,
@@ -273,6 +297,9 @@ def scan_card_for_attendance(
             out_time=None
         )
         created_record = crud.create_attendance(db, new_attendance)
+        _write_log(db, card_id=card_id, scan_timestamp=now, employee=employee,
+                   status_str="checked_in", result="success",
+                   message=f"Приход в {now.strftime('%H:%M:%S')}")
         return {"status": "checked_in", "employee_name": employee.name, "time": now}
 
     # Если запись есть, проверяем уход
@@ -281,23 +308,37 @@ def scan_card_for_attendance(
         # Проверка на двойное сканирование (debounce)
         time_diff = now - attendance_record.in_time
         if time_diff.total_seconds() < 60:
-            # Игнорируем, если сканирование произошло в течение 60 секунд после прихода
+            in_str = attendance_record.in_time.strftime('%H:%M:%S')
+            new_str = now.strftime('%H:%M:%S')
+            _write_log(db, card_id=card_id, scan_timestamp=now, employee=employee,
+                       status_str="debounced", result="warning",
+                       message=f"Игнор: скан в {new_str} слишком близко к приходу в {in_str} (разница {time_diff.total_seconds():.0f} сек, минимум 60)")
             return {"status": "debounced", "reason": "scanned too soon after check-in"}
-        
+
         attendance_record.out_time = now
         db.commit()
         db.refresh(attendance_record)
+        _write_log(db, card_id=card_id, scan_timestamp=now, employee=employee,
+                   status_str="checked_out", result="success",
+                   message=f"Уход в {now.strftime('%H:%M:%S')} (отработано {time_diff.total_seconds()/3600:.2f} ч)")
         return {"status": "checked_out", "employee_name": employee.name, "time": now}
     else:
         # Сценарий C: Перезапись времени ухода
         time_diff = now - attendance_record.out_time
         if time_diff.total_seconds() < 60:
-            # Игнорируем, если сканирование произошло в течение 60 секунд после предыдущего ухода
+            old_str = attendance_record.out_time.strftime('%H:%M:%S')
+            new_str = now.strftime('%H:%M:%S')
+            _write_log(db, card_id=card_id, scan_timestamp=now, employee=employee,
+                       status_str="debounced", result="warning",
+                       message=f"Игнор: скан в {new_str} слишком близко к предыдущему уходу в {old_str} (разница {time_diff.total_seconds():.0f} сек, минимум 60)")
             return {"status": "debounced", "reason": "scanned too soon after previous check-out"}
 
         attendance_record.out_time = now
         db.commit()
         db.refresh(attendance_record)
+        _write_log(db, card_id=card_id, scan_timestamp=now, employee=employee,
+                   status_str="re_checked_out", result="success",
+                   message=f"Уход переписан на {now.strftime('%H:%M:%S')}")
         return {"status": "re_checked_out", "employee_name": employee.name, "time": now}
 
 
@@ -328,17 +369,74 @@ def bulk_scan_cards_for_attendance(
             results.append({"card_id": scan.card_id, "status": res.get("status")})
             processed_count += 1
         except HTTPException as e:
+            # ИСПРАВЛЕНО: откатываем "сломанную" сессию, иначе все следующие сканы в пачке падают
+            db.rollback()
+            _write_log(db, card_id=scan.card_id, scan_timestamp=scan.timestamp, employee=None,
+                       status_str="error", result="error",
+                       message=f"HTTP {e.status_code}: {e.detail}")
             results.append({"card_id": scan.card_id, "error": e.detail})
             errors_count += 1
         except Exception as e:
+            db.rollback()
+            _write_log(db, card_id=scan.card_id, scan_timestamp=scan.timestamp, employee=None,
+                       status_str="error", result="error",
+                       message=f"Внутренняя ошибка сервера: {type(e).__name__}: {str(e)[:200]}")
             results.append({"card_id": scan.card_id, "error": str(e)})
             errors_count += 1
+
+    # Если хоть один скан упал — отвечаем 207 (а не 200), чтобы сканер НЕ удалил эти записи
+    # и попробовал отправить их позже.
+    if errors_count > 0 and processed_count == 0:
+        # Все скансы провалились -> 500, чтобы сканер сохранил всё
+        raise HTTPException(status_code=500, detail={"processed": 0, "errors": errors_count, "details": results})
 
     return {
         "processed": processed_count,
         "errors": errors_count,
         "details": results
     }
+
+
+# ========== ЭНДПОИНТЫ ДЛЯ ЛОГОВ СКАНИРОВАНИЙ ==========
+
+@app.get("/api/scan-logs", response_model=List[schemas.AttendanceLogEntry])
+def get_scan_logs(
+    result: Optional[str] = None,  # 'success', 'warning', 'error' или None (всё)
+    limit: int = 200,
+    db: Session = Depends(database.get_db)
+):
+    """
+    Получить логи сканирований (для страницы Логи в админке).
+
+    Параметры:
+    - result: фильтр по результату ('success', 'warning', 'error')
+    - limit: максимум записей (по умолчанию 200)
+    """
+    query = db.query(models.AttendanceLog)
+    if result:
+        query = query.filter(models.AttendanceLog.result == result)
+    logs = query.order_by(models.AttendanceLog.received_at.desc()).limit(limit).all()
+    return logs
+
+
+@app.delete("/api/scan-logs")
+def clear_scan_logs(
+    older_than_days: Optional[int] = None,
+    db: Session = Depends(database.get_db)
+):
+    """
+    Очистить логи. Если передан older_than_days — удаляет старше N дней. Иначе все.
+    """
+    from datetime import timedelta
+    if older_than_days is not None:
+        cutoff = datetime.now() - timedelta(days=older_than_days)
+        deleted = db.query(models.AttendanceLog).filter(
+            models.AttendanceLog.received_at < cutoff
+        ).delete()
+    else:
+        deleted = db.query(models.AttendanceLog).delete()
+    db.commit()
+    return {"deleted": deleted}
 
 
 # ========== ЭНДПОИНТЫ ДЛЯ РАСЧЁТА ЗАРПЛАТЫ ==========
