@@ -23,6 +23,7 @@ const Payroll = () => {
 
   const [showBonusModal, setShowBonusModal] = useState(false);
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [showFineModal, setShowFineModal] = useState(false);
   const [showPointsModal, setShowPointsModal] = useState(false);
   const [showHoursModal, setShowHoursModal] = useState(false);
   const [showAdjustPointsModal, setShowAdjustPointsModal] = useState(false);
@@ -128,11 +129,13 @@ const Payroll = () => {
     if (type === 'BONUS') setShowBonusModal(true);
     else if (type === 'ADVANCE') setShowAdvanceModal(true);
     else if (type === 'POINTS') setShowPointsModal(true);
+    else if (type === 'FINE') setShowFineModal(true);
   }, [selectedMonth]);
 
   const closeAllModals = useCallback(() => {
     setShowBonusModal(false);
     setShowAdvanceModal(false);
+    setShowFineModal(false);
     setShowPointsModal(false);
     setShowHoursModal(false);
     setShowAdjustPointsModal(false);
@@ -332,6 +335,42 @@ const Payroll = () => {
       </div>
     );
   }, [showAdvanceModal, transAmount, transComment, transDate, closeAllModals, handleTransactionSubmit]);
+
+  const FineModal = useMemo(() => {
+    if (!showFineModal) return null;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeAllModals} />
+        <div className="relative bg-white rounded-2xl shadow-soft-xl w-full max-w-md scale-in">
+          <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
+            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+              <AlertTriangle size={20} className="text-rose-600" />
+              Штраф
+            </h2>
+            <button onClick={closeAllModals} className="p-2 hover:bg-slate-100 rounded-lg transition-soft"><X size={20} className="text-slate-400" /></button>
+          </div>
+          <form onSubmit={handleTransactionSubmit} className="p-5 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Сумма (грн) *</label>
+              <input type="number" step="0.01" min="0" required value={transAmount} onChange={(e) => setTransAmount(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:border-transparent" placeholder="500.00" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Причина штрафа</label>
+              <textarea value={transComment} onChange={(e) => setTransComment(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:border-transparent" rows="3" placeholder="За что штраф..." />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Дата *</label>
+              <input type="date" required value={transDate} onChange={(e) => setTransDate(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:border-transparent" />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={closeAllModals} className="px-6 py-3 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 font-medium">Отмена</button>
+              <button type="submit" className="px-6 py-3 bg-gradient-to-r from-rose-500 to-rose-600 text-white rounded-xl font-medium shadow-soft">Добавить</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }, [showFineModal, transAmount, transComment, transDate, closeAllModals, handleTransactionSubmit]);
 
   const HoursModal = useMemo(() => {
     if (!showHoursModal) return null;
@@ -535,7 +574,7 @@ const Payroll = () => {
             ))
           )}
         </div>
-        {PointsModal}{BonusModal}{AdvanceModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
+        {PointsModal}{BonusModal}{AdvanceModal}{FineModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
       </div>
     );
   }
@@ -803,7 +842,7 @@ const Payroll = () => {
       )}
 
       {/* Modals remain the same */}
-      {PointsModal}{BonusModal}{AdvanceModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
+      {PointsModal}{BonusModal}{AdvanceModal}{FineModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
 
       {/* Hidden Payslip Template for printing */}
       <div className="hidden">

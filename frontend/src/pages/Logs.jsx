@@ -1,8 +1,8 @@
 // pages/Logs.jsx - Журнал сканирований (что приняли, что нет и почему)
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ScrollText, CheckCircle2, AlertTriangle, XCircle, RefreshCw,
-  Trash2, Clock, CreditCard, UserRound, Inbox, ServerCrash
+  Trash2, Clock, CreditCard, UserRound, Inbox, ServerCrash, Search, Calendar
 } from 'lucide-react';
 import { getScanLogs, clearScanLogs } from '../api/client';
 
@@ -26,6 +26,8 @@ const Logs = () => {
   const [activeTab, setActiveTab] = useState('error');
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [todayOnly, setTodayOnly] = useState(false);
 
   const loadLogs = useCallback(async (resultFilter) => {
     setLoading(true);
@@ -45,6 +47,27 @@ const Logs = () => {
     const interval = setInterval(() => loadLogs(activeTab), 5000);
     return () => clearInterval(interval);
   }, [activeTab, loadLogs]);
+
+  // Применяем фильтры на клиенте: поиск по ФИО/карте/тексту + "только сегодня"
+  const filteredLogs = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return logs.filter((log) => {
+      if (todayOnly) {
+        const logDate = new Date(log.received_at).toISOString().slice(0, 10);
+        if (logDate !== todayStr) return false;
+      }
+      if (q) {
+        const haystack = [
+          log.employee_name || '',
+          log.card_id || '',
+          log.message || '',
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [logs, searchQuery, todayOnly]);
 
   const handleClear = async () => {
     if (!confirm('Удалить логи старше 30 дней?')) return;
@@ -114,6 +137,32 @@ const Logs = () => {
         </div>
       </div>
 
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="relative flex-1 max-w-md">
+          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Поиск по ФИО, карте или тексту..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-12 pr-4 py-3 bg-white rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-soft transition-soft"
+          />
+        </div>
+        <button
+          onClick={() => setTodayOnly((v) => !v)}
+          className={`
+            flex items-center gap-2 px-4 py-3 rounded-xl font-medium shadow-soft transition-soft
+            ${todayOnly
+              ? 'bg-blue-500 text-white'
+              : 'bg-white text-slate-600 hover:bg-slate-50'}
+          `}
+        >
+          <Calendar size={18} />
+          Только сегодня
+        </button>
+      </div>
+
       {/* Tabs */}
       <div className="bg-white rounded-2xl p-2 shadow-soft inline-flex gap-1 mb-6">
         {TABS.map((t) => {
@@ -144,19 +193,23 @@ const Logs = () => {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
             <p className="text-slate-500">Загрузка...</p>
           </div>
-        ) : logs.length === 0 ? (
+        ) : filteredLogs.length === 0 ? (
           <div className="p-16 text-center">
             <Inbox size={64} className="mx-auto mb-4 text-slate-300" />
-            <p className="text-xl font-bold text-slate-700 mb-1">Логов нет</p>
+            <p className="text-xl font-bold text-slate-700 mb-1">
+              {logs.length === 0 ? 'Логов нет' : 'Ничего не найдено'}
+            </p>
             <p className="text-slate-500">
-              {activeTab === 'success' && 'Принятых отметок ещё не было'}
-              {activeTab === 'error'   && 'Отлично — ошибок нет!'}
-              {activeTab === 'warning' && 'Игнорируемых сканов не зафиксировано'}
+              {logs.length === 0
+                ? (activeTab === 'success' ? 'Принятых отметок ещё не было'
+                  : activeTab === 'error' ? 'Отлично — ошибок нет!'
+                  : 'Игнорируемых сканов не зафиксировано')
+                : 'Попробуй убрать фильтры'}
             </p>
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {logs.map((log) => {
+            {filteredLogs.map((log) => {
               const colors = getRowColors(log.result);
               return (
                 <div
@@ -219,7 +272,8 @@ const Logs = () => {
 
       {/* Footer hint */}
       <div className="mt-4 text-xs text-slate-400 text-center">
-        Показано до 300 последних записей. Обновляется каждые 5 секунд.
+        Найдено: <span className="font-bold text-slate-500">{filteredLogs.length}</span>
+        {' '}из {logs.length} записей. Обновляется каждые 5 секунд.
       </div>
     </div>
   );
