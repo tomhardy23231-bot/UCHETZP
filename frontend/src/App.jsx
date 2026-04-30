@@ -18,13 +18,13 @@ function App() {
     <Router>
       <TodayAttendanceProvider>
       <Toaster position="bottom-right" />
-      <div className="flex min-h-screen bg-gray-100">
+      <div className="flex min-h-screen bg-slate-50">
         <NotificationManager />
         {/* Боковая панель */}
         <Sidebar isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
 
         {/* Основной контент - с учётом сворачиваемой боковой панели */}
-        <main className={`flex-1 transition-all duration-300 ${isCollapsed ? 'lg:ml-16' : 'lg:ml-64'}`}>
+        <main className={`flex-1 transition-all duration-200 ${isCollapsed ? 'lg:ml-14' : 'lg:ml-56'}`}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/journal" element={<Journal />} />

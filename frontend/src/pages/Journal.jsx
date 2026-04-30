@@ -1,5 +1,5 @@
 // pages/Journal.jsx - Modern Soft UI Attendance Journal
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTtlLocalStorage } from '../hooks/useTtlLocalStorage';
 import { Calendar, Clock, UserCheck, UserX, AlertTriangle, Info, UserRound, Briefcase, UserRoundCheck, UserRoundX, ChevronLeft, ChevronRight, LayoutGrid, List } from 'lucide-react';
 import { getEmployees, getAttendanceJournal, updateAttendance, createAttendance, deleteAttendance } from '../api/client';
@@ -19,6 +19,13 @@ const Journal = () => {
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'table'
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEmployeeForModal, setSelectedEmployeeForModal] = useState(null);
+
+  // ref-зеркало attendanceData — нужно потому что внутри async commit нам нужен
+  // АКТУАЛЬНЫЙ стейт, а не зафиксированный замыканием на момент вызова
+  const attendanceDataRef = useRef({});
+  // Счётчик коммитов в полёте — пока он > 0, polling не перезатирает локальный стейт
+  // (это убирает мигание и "пропадающие у другого" значения)
+  const pendingSavesRef = useRef(0);
 
   const handleCardClick = (employee) => {
     setSelectedEmployeeForModal(employee);
@@ -55,6 +62,13 @@ const Journal = () => {
         const key = `${record.date}-${record.employee_name}`;
         grouped[key] = record;
       });
+
+      // Если в этот момент идут несохранённые коммиты — НЕ перезатираем локальный стейт.
+      // Иначе свежий запрос с сервера вернёт промежуточное состояние и затрёт
+      // ещё-не-долетевшие изменения соседних строк ("пропадает у другого").
+      if (pendingSavesRef.current > 0 && isPolling) return;
+
+      attendanceDataRef.current = grouped;
       setAttendanceData(grouped);
     } catch (error) {
       console.error('Ошибка загрузки журнала:', error);
@@ -127,52 +141,98 @@ const Journal = () => {
   // Commit time to server (save on blur/enter)
   const commitTimeChange = async (dateStr, employee, field, value) => {
     const key = `${dateStr}-${employee.name}`;
-    const existingRecord = attendanceData[key];
+    // ВАЖНО: читаем актуальный стейт через ref, а не из замыкания, потому что
+    // несколько коммитов могут идти параллельно и closure протухает
+    const existingRecord = attendanceDataRef.current[key];
 
+    const normalized = normalizeTimeValue(value);
+    // Если осталось неполное значение ("18", "18:3") - не сохраняем
+    if (normalized && !isValidHHMM(normalized)) return;
+
+    const timeValue = normalized ? normalized : null;
+    let currentInTime = existingRecord?.in_time || null;
+    let currentOutTime = existingRecord?.out_time || null;
+    if (field === 'in') currentInTime = timeValue;
+    else currentOutTime = timeValue;
+
+    // Если ничего не поменялось — нечего сохранять
+    const before = field === 'in' ? (existingRecord?.in_time || null) : (existingRecord?.out_time || null);
+    if (before === timeValue) {
+      // Просто очищаем черновик и выходим
+      setDraftTimes((prev) => {
+        const copy = { ...prev };
+        delete copy[getDraftKey(dateStr, employee.id, field)];
+        return copy;
+      });
+      return;
+    }
+
+    const inTimeISO = currentInTime ? `${dateStr}T${currentInTime}:00` : null;
+    const outTimeISO = currentOutTime ? `${dateStr}T${currentOutTime}:00` : null;
+
+    // ===== ОПТИМИСТИЧНОЕ ОБНОВЛЕНИЕ =====
+    // Сразу обновляем локальный стейт, чтобы UI не "мигал" пока летит запрос на сервер.
+    const optimisticRecord = !currentInTime && !currentOutTime
+      ? null  // удаление
+      : {
+          ...(existingRecord || {}),
+          id: existingRecord?.id ?? `temp-${Date.now()}-${Math.random()}`,
+          date: dateStr,
+          employee_name: employee.name,
+          in_time: currentInTime,
+          out_time: currentOutTime,
+        };
+
+    setAttendanceData((prev) => {
+      const next = { ...prev };
+      if (optimisticRecord === null) delete next[key];
+      else next[key] = optimisticRecord;
+      attendanceDataRef.current = next;
+      return next;
+    });
+
+    // Чёрновик можно очистить СРАЗУ — оптимистический record покажет наше значение
+    setDraftTimes((prev) => {
+      const copy = { ...prev };
+      delete copy[getDraftKey(dateStr, employee.id, field)];
+      return copy;
+    });
+
+    // ===== ОТПРАВКА НА СЕРВЕР =====
+    pendingSavesRef.current += 1;
     try {
-      const normalized = normalizeTimeValue(value);
-
-      // If user left incomplete value (e.g. "18" or "18:3") - do not save
-      if (normalized && !isValidHHMM(normalized)) return;
-
-      const timeValue = normalized ? normalized : null;
-
-      let currentInTime = existingRecord?.in_time || null;
-      let currentOutTime = existingRecord?.out_time || null;
-
-      if (field === 'in') currentInTime = timeValue;
-      else currentOutTime = timeValue;
-
-      const inTimeISO = currentInTime ? `${dateStr}T${currentInTime}:00` : null;
-      const outTimeISO = currentOutTime ? `${dateStr}T${currentOutTime}:00` : null;
-
-      if (existingRecord) {
-        // If both fields are empty, physically delete the record
+      if (existingRecord && existingRecord.id && !String(existingRecord.id).startsWith('temp-')) {
         if (!currentInTime && !currentOutTime) {
           await deleteAttendance(existingRecord.id);
         } else {
           await updateAttendance(existingRecord.id, inTimeISO, outTimeISO);
         }
       } else if (inTimeISO || outTimeISO) {
-        await createAttendance({
+        const created = await createAttendance({
           employee_id: employee.id,
           date: dateStr,
           in_time: inTimeISO,
-          out_time: outTimeISO
+          out_time: outTimeISO,
         });
+        // подменяем temp-id на реальный
+        if (created && created.id) {
+          setAttendanceData((prev) => {
+            const next = { ...prev };
+            if (next[key]) {
+              next[key] = { ...next[key], id: created.id };
+              attendanceDataRef.current = next;
+            }
+            return next;
+          });
+        }
       }
-
-      // Clear draft for this field after save
-      setDraftTimes((prev) => {
-        const copy = { ...prev };
-        delete copy[getDraftKey(dateStr, employee.id, field)];
-        return copy;
-      });
-
-      await loadAttendance();
     } catch (error) {
       console.error('Ошибка сохранения:', error);
       toast.error('Ошибка сохранения: ' + (error.response?.data?.detail || error.message));
+      // Откатываемся: запрашиваем актуальное состояние с сервера
+      await loadAttendance();
+    } finally {
+      pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
     }
   };
 

@@ -11,6 +11,7 @@ import {
 import { downloadCsv } from '../utils/exportCsv';
 import { getEmployees, calculatePayroll, createTransaction, getEmployeeTransactions, deleteTransaction, adjustHours, adjustPoints } from '../api/client';
 import PayslipTemplate from '../components/PayslipTemplate';
+import TransactionModal from '../components/payroll/TransactionModal';
 import toast from 'react-hot-toast';
 
 const Payroll = () => {
@@ -23,20 +24,13 @@ const Payroll = () => {
   const [totalPayroll, setTotalPayroll] = useState({ totalBase: 0, toPay: 0, loading: false });
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [showBonusModal, setShowBonusModal] = useState(false);
-  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
-  const [showFineModal, setShowFineModal] = useState(false);
-  const [showPointsModal, setShowPointsModal] = useState(false);
+  // Универсальная модалка транзакций — null когда закрыта, иначе 'BONUS' | 'ADVANCE' | 'FINE' | 'POINTS'
+  const [transactionModalType, setTransactionModalType] = useState(null);
   const [showHoursModal, setShowHoursModal] = useState(false);
   const [showAdjustPointsModal, setShowAdjustPointsModal] = useState(false);
   const [showBonusesListModal, setShowBonusesListModal] = useState(false);
 
-  // Form states
-  const [transAmount, setTransAmount] = useState('');
-  const [transPointsCount, setTransPointsCount] = useState('');
-  const [transComment, setTransComment] = useState('');
-  const [transDate, setTransDate] = useState(new Date().toISOString().split('T')[0]);
-  const [currentTransType, setCurrentTransType] = useState(null);
+  // Состояния для модалок корректировки часов/очков
   const [targetHours, setTargetHours] = useState('');
   const [targetPoints, setTargetPoints] = useState('');
 
@@ -68,8 +62,9 @@ const Payroll = () => {
   }, [employees, selectedMonth]);
 
   const getAvatarColor = (name) => {
-    const colors = ['bg-blue-500', 'bg-indigo-500', 'bg-purple-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500'];
-    const charCode = name.charCodeAt(0);
+    // delegate to shared util to avoid duplication
+    const colors = ['bg-blue-500', 'bg-indigo-500', 'bg-violet-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500'];
+    const charCode = name?.charCodeAt(0) ?? 0;
     return colors[charCode % colors.length];
   };
 
@@ -192,41 +187,23 @@ const Payroll = () => {
   }, []);
 
   const openTransactionModal = useCallback((type) => {
-    setCurrentTransType(type);
-    setTransAmount('');
-    setTransPointsCount('');
-    setTransComment('');
-    setTransDate(`${selectedMonth}-01`);
-    if (type === 'BONUS') setShowBonusModal(true);
-    else if (type === 'ADVANCE') setShowAdvanceModal(true);
-    else if (type === 'POINTS') setShowPointsModal(true);
-    else if (type === 'FINE') setShowFineModal(true);
-  }, [selectedMonth]);
+    setTransactionModalType(type);
+  }, []);
 
   const closeAllModals = useCallback(() => {
-    setShowBonusModal(false);
-    setShowAdvanceModal(false);
-    setShowFineModal(false);
-    setShowPointsModal(false);
+    setTransactionModalType(null);
     setShowHoursModal(false);
     setShowAdjustPointsModal(false);
     setShowBonusesListModal(false);
-    setCurrentTransType(null);
   }, []);
 
-  const handleTransactionSubmit = useCallback(async (e) => {
-    e.preventDefault();
+  const handleTransactionSubmit = useCallback(async (data) => {
     try {
-      const isPoints = currentTransType === 'POINTS';
-      const data = {
+      await createTransaction({
         employee_id: selectedEmployee.id,
-        type: currentTransType,
-        amount: isPoints ? 0 : (parseFloat(transAmount) || 0),
-        points_count: isPoints ? (parseFloat(transPointsCount) || 0) : null,
-        comment: transComment || null,
-        date: transDate
-      };
-      await createTransaction(data);
+        type: transactionModalType,
+        ...data,
+      });
       await selectEmployee(selectedEmployee);
       loadTotalPayroll();
       closeAllModals();
@@ -234,7 +211,7 @@ const Payroll = () => {
     } catch (error) {
       toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
-  }, [currentTransType, transAmount, transPointsCount, transComment, transDate, selectedEmployee, selectEmployee, closeAllModals, loadTotalPayroll]);
+  }, [transactionModalType, selectedEmployee, selectEmployee, closeAllModals, loadTotalPayroll]);
 
   const handleDeleteTransaction = useCallback(async (id) => {
     if (confirm('Удалить эту запись?')) {
@@ -296,154 +273,17 @@ const Payroll = () => {
   };
 
   // --- MODALS ---
-  const PointsModal = useMemo(() => {
-    if (!showPointsModal) return null;
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeAllModals} />
-        <div className="relative bg-white rounded-2xl shadow-soft-xl w-full max-w-md scale-in">
-          <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              <Target size={20} className="text-purple-600" />
-              Сдельная работа
-            </h2>
-            <button onClick={closeAllModals} className="p-2 hover:bg-slate-100 rounded-lg transition-soft"><X size={20} className="text-slate-400" /></button>
-          </div>
-          <form onSubmit={handleTransactionSubmit} className="p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Очки *</label>
-              <input type="number" step="0.01" min="0" required value={transPointsCount} onChange={(e) => setTransPointsCount(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent" placeholder="100" />
-            </div>
-            {transPointsCount && selectedEmployee && (
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm text-purple-800 flex items-center gap-2">
-                <Target size={16} /> <span>{transPointsCount} × {selectedEmployee.point_val.toFixed(2)} = <strong>{(parseFloat(transPointsCount) * selectedEmployee.point_val).toFixed(2)} ₴</strong></span>
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Комментарий</label>
-              <textarea value={transComment} onChange={(e) => setTransComment(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent" rows="3" placeholder="Описание..." />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Дата *</label>
-              <input type="date" required value={transDate} onChange={(e) => setTransDate(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent" />
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={closeAllModals} className="px-6 py-3 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 font-medium">Отмена</button>
-              <button type="submit" className="px-6 py-3 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-xl font-medium shadow-soft">Добавить</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }, [showPointsModal, transPointsCount, transComment, transDate, selectedEmployee, closeAllModals, handleTransactionSubmit]);
-
-  const BonusModal = useMemo(() => {
-    if (!showBonusModal) return null;
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeAllModals} />
-        <div className="relative bg-white rounded-2xl shadow-soft-xl w-full max-w-md scale-in">
-          <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              <TrendingUp size={20} className="text-emerald-600" />
-              Премия
-            </h2>
-            <button onClick={closeAllModals} className="p-2 hover:bg-slate-100 rounded-lg transition-soft"><X size={20} className="text-slate-400" /></button>
-          </div>
-          <form onSubmit={handleTransactionSubmit} className="p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Сумма (грн) *</label>
-              <input type="number" step="0.01" min="0" required value={transAmount} onChange={(e) => setTransAmount(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="1000.00" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Комментарий</label>
-              <textarea value={transComment} onChange={(e) => setTransComment(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent" rows="3" placeholder="Причина..." />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Дата *</label>
-              <input type="date" required value={transDate} onChange={(e) => setTransDate(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent" />
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={closeAllModals} className="px-6 py-3 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 font-medium">Отмена</button>
-              <button type="submit" className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-xl font-medium shadow-soft">Добавить</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }, [showBonusModal, transAmount, transComment, transDate, closeAllModals, handleTransactionSubmit]);
-
-  const AdvanceModal = useMemo(() => {
-    if (!showAdvanceModal) return null;
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeAllModals} />
-        <div className="relative bg-white rounded-2xl shadow-soft-xl w-full max-w-md scale-in">
-          <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              <Wallet size={20} className="text-orange-600" />
-              Аванс
-            </h2>
-            <button onClick={closeAllModals} className="p-2 hover:bg-slate-100 rounded-lg transition-soft"><X size={20} className="text-slate-400" /></button>
-          </div>
-          <form onSubmit={handleTransactionSubmit} className="p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Сумма (грн) *</label>
-              <input type="number" step="0.01" min="0" required value={transAmount} onChange={(e) => setTransAmount(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent" placeholder="5000.00" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Комментарий</label>
-              <textarea value={transComment} onChange={(e) => setTransComment(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent" rows="3" placeholder="Причина..." />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Дата *</label>
-              <input type="date" required value={transDate} onChange={(e) => setTransDate(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent" />
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={closeAllModals} className="px-6 py-3 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 font-medium">Отмена</button>
-              <button type="submit" className="px-6 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl font-medium shadow-soft">Добавить</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }, [showAdvanceModal, transAmount, transComment, transDate, closeAllModals, handleTransactionSubmit]);
-
-  const FineModal = useMemo(() => {
-    if (!showFineModal) return null;
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeAllModals} />
-        <div className="relative bg-white rounded-2xl shadow-soft-xl w-full max-w-md scale-in">
-          <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              <AlertTriangle size={20} className="text-rose-600" />
-              Штраф
-            </h2>
-            <button onClick={closeAllModals} className="p-2 hover:bg-slate-100 rounded-lg transition-soft"><X size={20} className="text-slate-400" /></button>
-          </div>
-          <form onSubmit={handleTransactionSubmit} className="p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Сумма (грн) *</label>
-              <input type="number" step="0.01" min="0" required value={transAmount} onChange={(e) => setTransAmount(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:border-transparent" placeholder="500.00" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Причина штрафа</label>
-              <textarea value={transComment} onChange={(e) => setTransComment(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:border-transparent" rows="3" placeholder="За что штраф..." />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Дата *</label>
-              <input type="date" required value={transDate} onChange={(e) => setTransDate(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:border-transparent" />
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={closeAllModals} className="px-6 py-3 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 font-medium">Отмена</button>
-              <button type="submit" className="px-6 py-3 bg-gradient-to-r from-rose-500 to-rose-600 text-white rounded-xl font-medium shadow-soft">Добавить</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }, [showFineModal, transAmount, transComment, transDate, closeAllModals, handleTransactionSubmit]);
+  // Универсальная модалка транзакций (Премия / Аванс / Штраф / Сдельная) — один компонент
+  const transactionModal = (
+    <TransactionModal
+      open={transactionModalType !== null}
+      type={transactionModalType}
+      onClose={closeAllModals}
+      defaultDate={`${selectedMonth}-01`}
+      pointValue={selectedEmployee?.point_val}
+      onSubmit={handleTransactionSubmit}
+    />
+  );
 
   const HoursModal = useMemo(() => {
     if (!showHoursModal) return null;
@@ -656,7 +496,7 @@ const Payroll = () => {
             ))
           )}
         </div>
-        {PointsModal}{BonusModal}{AdvanceModal}{FineModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
+        {transactionModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
       </div>
     );
   }
@@ -932,7 +772,7 @@ const Payroll = () => {
       )}
 
       {/* Modals remain the same */}
-      {PointsModal}{BonusModal}{AdvanceModal}{FineModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
+      {transactionModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
 
       {/* Hidden Payslip Template for printing */}
       <div className="hidden">
