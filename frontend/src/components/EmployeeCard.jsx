@@ -1,6 +1,7 @@
-// components/EmployeeCard.jsx
+// components/EmployeeCard.jsx — карточка сотрудника в журнале (Linear)
 import React, { useMemo } from 'react';
-import { Clock, Briefcase, ChevronRight, CheckCircle, XCircle } from 'lucide-react';
+import { Briefcase, CheckCircle, XCircle } from 'lucide-react';
+import Avatar from './ui/Avatar';
 
 const EmployeeCard = ({
   employee,
@@ -13,15 +14,12 @@ const EmployeeCard = ({
   handlePaste,
   isValidHHMM,
   calculateDuration,
-  getAvatarColor,
-  selectedMonth,
   getDaysInMonth,
   getRecord,
   onCardClick,
 }) => {
   const today = new Date().toISOString().slice(0, 10);
 
-  // Считаем общие часы за месяц + готовим данные для мини-графика по дням
   const { monthlyTotalHours, dailyChart } = useMemo(() => {
     let totalMinutes = 0;
     const chart = [];
@@ -55,101 +53,97 @@ const EmployeeCard = ({
   const todayInTime = draftTodayIn !== undefined ? draftTodayIn : todayRecord?.in_time;
   const todayOutTime = draftTodayOut !== undefined ? draftTodayOut : todayRecord?.out_time;
   const isPresent = todayInTime && !todayOutTime;
+  const nowHour = new Date().getHours();
+  const isUnclosedLate = isPresent && nowHour >= 21;
 
   return (
     <div
       onClick={() => onCardClick(employee)}
-      className="bg-slate-50 rounded-2xl shadow-soft hover:shadow-soft-lg transition-soft-fast cursor-pointer flex flex-col justify-between"
+      className="bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors cursor-pointer flex flex-col"
     >
-      {/* Card Header */}
-      <div className="p-4 border-b border-slate-200/60">
-        <div className="flex items-center gap-3">
-          <div className={`w-12 h-12 ${getAvatarColor(employee.name)} rounded-full flex items-center justify-center text-white text-xl font-bold`}>
-            {employee.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+      {/* Header */}
+      <div className="px-4 py-3 flex items-center gap-2.5 border-b border-slate-100">
+        <Avatar name={employee.name} size="sm" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-slate-900 truncate">{employee.name}</div>
+          <div className="text-xs text-slate-500 truncate flex items-center gap-1">
+            <Briefcase size={11} />
+            {employee.position}
           </div>
-          <div className="flex-1">
-            <h3 className="font-bold text-slate-800 text-base truncate">{employee.name}</h3>
-            <p className="text-slate-500 text-sm flex items-center gap-1.5">
-              <Briefcase size={14} />
-              <span className="truncate">{employee.position}</span>
-            </p>
-          </div>
-          <div className={`w-3 h-3 rounded-full ${isPresent ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
         </div>
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+          isUnclosedLate ? 'bg-rose-500 animate-pulse' :
+          isPresent ? 'bg-emerald-500 animate-pulse' :
+          'bg-slate-300'
+        }`} />
       </div>
 
-      {/* Monthly Summary */}
-      <div className="p-4 flex-grow flex flex-col items-center justify-center">
-        <p className="text-slate-500 text-sm">Часов за месяц</p>
-        <p className="text-5xl font-black text-slate-800 tracking-tighter">
-          {monthlyTotalHours.toFixed(1)}<span className="text-3xl font-bold text-slate-400">h</span>
-        </p>
+      {/* Total hours */}
+      <div className="px-4 py-3">
+        <div className="flex items-baseline justify-between">
+          <span className="text-xs text-slate-500 uppercase tracking-wider font-medium">Часов за месяц</span>
+          <span className="text-2xl font-semibold text-slate-900 font-mono tabular-nums">
+            {monthlyTotalHours.toFixed(1)}
+            <span className="text-sm text-slate-400 ml-0.5">ч</span>
+          </span>
+        </div>
 
-        {/* Mini bar chart по дням месяца */}
-        <div className="w-full mt-3 px-1">
-          <div className="flex items-end gap-[2px] h-10">
+        {/* Mini bar chart */}
+        <div className="mt-2.5">
+          <div className="flex items-end gap-[1.5px] h-7">
             {dailyChart.map(({ date, hours, isWeekend }) => {
-              // 12 часов = 100% высоты бара
               const heightPct = Math.min(100, (hours / 12) * 100);
               const isToday = date === today;
-              let barColor = 'bg-slate-200';
-              if (hours > 0) {
-                barColor = isWeekend ? 'bg-rose-400' : 'bg-emerald-500';
-              }
+              let bar = 'bg-slate-200';
+              if (hours > 0) bar = isWeekend ? 'bg-rose-300' : 'bg-slate-700';
               return (
                 <div
                   key={date}
                   className="flex-1 flex flex-col justify-end h-full"
-                  title={`${date}: ${hours > 0 ? hours.toFixed(2) + ' ч' : 'нет данных'}`}
+                  title={`${date}: ${hours > 0 ? hours.toFixed(2) + ' ч' : 'нет'}`}
                 >
                   <div
-                    className={`w-full rounded-sm transition-all ${barColor} ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
-                    style={{ height: hours > 0 ? `${heightPct}%` : '6%', minHeight: '2px' }}
-                  ></div>
+                    className={`w-full rounded-sm ${bar} ${isToday ? 'ring-1 ring-blue-500' : ''}`}
+                    style={{ height: hours > 0 ? `${heightPct}%` : '4%', minHeight: '2px' }}
+                  />
                 </div>
               );
             })}
           </div>
-          <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium mt-1">
-            <span>1</span>
-            <span>{dailyChart.length}</span>
-          </div>
         </div>
       </div>
 
-      {/* Today Quick Entry */}
-      <div className="bg-white/70 p-4 rounded-b-2xl border-t border-slate-200/60">
-        <p className="text-sm font-bold text-slate-700 mb-2 text-center">Сегодня, {new Date(today).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</p>
-        <div className="flex gap-2">
+      {/* Today input */}
+      <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/40">
+        <div className="text-[11px] text-slate-500 font-medium mb-1.5">
+          Сегодня · {new Date(today).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+        </div>
+        <div className="flex gap-1.5">
           <div className="flex-1 relative">
+            <CheckCircle size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-emerald-500" />
             <input
-              type="text"
-              inputMode="numeric"
-              placeholder="Вход"
+              type="text" inputMode="numeric" placeholder="HHMM"
               value={draftTimes[getDraftKey(today, employee.id, 'in')] ?? (todayRecord?.in_time || '')}
               onChange={(e) => handleTimeInputChange(today, employee, 'in', e.target.value)}
               onBlur={(e) => commitTimeChange(today, employee, 'in', e.target.value)}
               onKeyDown={(e) => handleTimeKeyDown(e, today, employee, 'in')}
               onPaste={(e) => handlePaste(e, today, employee, 'in')}
-              className="w-full pl-8 pr-2 py-2 text-sm border border-slate-200 rounded-lg focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 text-center bg-white shadow-soft focus:shadow-soft-lg transition-soft"
+              className="w-full pl-6 pr-1.5 h-7 text-xs font-mono border border-slate-200 rounded bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-center"
               onClick={(e) => e.stopPropagation()}
             />
-            <CheckCircle size={16} className="absolute left-2 top-1/2 -translate-y-1/2 text-emerald-500" />
           </div>
           <div className="flex-1 relative">
+            <XCircle size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-rose-500" />
             <input
-              type="text"
-              inputMode="numeric"
-              placeholder="Выход"
+              type="text" inputMode="numeric" placeholder="HHMM"
               value={draftTimes[getDraftKey(today, employee.id, 'out')] ?? (todayRecord?.out_time || '')}
               onChange={(e) => handleTimeInputChange(today, employee, 'out', e.target.value)}
               onBlur={(e) => commitTimeChange(today, employee, 'out', e.target.value)}
               onKeyDown={(e) => handleTimeKeyDown(e, today, employee, 'out')}
               onPaste={(e) => handlePaste(e, today, employee, 'out')}
-              className="w-full pl-8 pr-2 py-2 text-sm border border-slate-200 rounded-lg focus:ring-1 focus:ring-rose-500 focus:border-rose-500 text-center bg-white shadow-soft focus:shadow-soft-lg transition-soft"
+              className="w-full pl-6 pr-1.5 h-7 text-xs font-mono border border-slate-200 rounded bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-center"
               onClick={(e) => e.stopPropagation()}
             />
-            <XCircle size={16} className="absolute left-2 top-1/2 -translate-y-1/2 text-rose-500" />
           </div>
         </div>
       </div>

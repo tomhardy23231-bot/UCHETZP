@@ -303,72 +303,63 @@ const Journal = () => {
     return attendanceData[`${dateStr}-${employeeName}`];
   };
 
-  // Get avatar color based on name
+  // Get avatar color based on name (delegate to shared util)
   const getAvatarColor = (name) => {
-    const colors = [
-      'bg-blue-500', 'bg-indigo-500', 'bg-purple-500',
-      'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500'
-    ];
-    const charCode = name.charCodeAt(0);
+    const colors = ['bg-blue-500', 'bg-indigo-500', 'bg-violet-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500'];
+    const charCode = name?.charCodeAt(0) ?? 0;
     return colors[charCode % colors.length];
   };
 
   if (loading && employees.length === 0) {
     return (
-      <div className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-slate-500 font-medium">Загрузка данных...</p>
+          <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-200 border-t-slate-900 mx-auto mb-2"></div>
+          <p className="text-sm text-slate-500">Загрузка...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      {/* Header - Modern Soft UI */}
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="min-h-screen px-6 md:px-8 py-6">
+      {/* Header */}
+      <div className="mb-5 flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-4">
-          <h1 className="text-4xl font-black text-slate-800 flex items-center gap-3 shrink-0">
-            <Calendar size={32} className="text-blue-600" />
-            Журнал
-          </h1>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Журнал</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Посещаемость по дням</p>
+          </div>
 
-          {/* New Month Selector */}
-          <div className="flex items-center gap-2 bg-white rounded-2xl p-2 shadow-soft">
-            <button onClick={handlePrevMonth} className="p-2 rounded-lg hover:bg-slate-100 active:bg-slate-200 transition-colors">
-              <ChevronLeft size={20} className="text-slate-600" />
+          {/* Month selector */}
+          <div className="flex items-center bg-white border border-slate-200 rounded-md h-9">
+            <button onClick={handlePrevMonth} className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-l-md transition-colors">
+              <ChevronLeft size={16} />
             </button>
-            <span className="text-slate-800 font-bold text-lg w-32 text-center">
+            <span className="px-3 text-sm font-medium text-slate-900 capitalize min-w-[140px] text-center">
               {new Date(selectedMonth).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
             </span>
-            <button onClick={handleNextMonth} className="p-2 rounded-lg hover:bg-slate-100 active:bg-slate-200 transition-colors">
-              <ChevronRight size={20} className="text-slate-600" />
+            <button onClick={handleNextMonth} className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-r-md transition-colors">
+              <ChevronRight size={16} />
             </button>
           </div>
         </div>
 
-        {/* View Switcher */}
-        <div className="flex items-center gap-2 bg-white rounded-2xl p-2 shadow-soft">
+        {/* View switcher */}
+        <div className="flex bg-white border border-slate-200 rounded-md p-0.5">
           <button
             onClick={() => setViewMode('grid')}
-            className={`
-              flex items-center gap-2 px-4 py-2 rounded-lg transition-soft font-semibold
-              ${viewMode === 'grid' ? 'bg-blue-500 text-white shadow-soft-lg' : 'text-slate-600 hover:bg-slate-100'}
-            `}
+            className={`flex items-center gap-1.5 px-2.5 h-8 rounded text-xs font-medium transition-colors ${viewMode === 'grid' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            <LayoutGrid size={18} />
-            <span>Карточки</span>
+            <LayoutGrid size={14} />
+            Карточки
           </button>
           <button
             onClick={() => setViewMode('table')}
-            className={`
-              flex items-center gap-2 px-4 py-2 rounded-lg transition-soft font-semibold
-              ${viewMode === 'table' ? 'bg-blue-500 text-white shadow-soft-lg' : 'text-slate-600 hover:bg-slate-100'}
-            `}
+            className={`flex items-center gap-1.5 px-2.5 h-8 rounded text-xs font-medium transition-colors ${viewMode === 'table' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            <List size={18} />
-            <span>Таблица</span>
+            <List size={14} />
+            Таблица
           </button>
         </div>
       </div>

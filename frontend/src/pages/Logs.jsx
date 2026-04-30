@@ -1,16 +1,17 @@
-// pages/Logs.jsx - Журнал сканирований (что приняли, что нет и почему)
+// pages/Logs.jsx — Linear-минимализм
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ScrollText, CheckCircle2, AlertTriangle, XCircle, RefreshCw,
-  Trash2, Clock, CreditCard, UserRound, Inbox, ServerCrash, Search, Calendar
+  Trash2, CreditCard, Inbox, ServerCrash, Search, Calendar,
 } from 'lucide-react';
 import { getScanLogs, clearScanLogs } from '../api/client';
 import toast from 'react-hot-toast';
+import Button from '../components/ui/Button';
 
 const TABS = [
-  { key: 'success', label: 'Принятые', icon: CheckCircle2, color: 'emerald' },
-  { key: 'error',   label: 'Ошибки',   icon: XCircle,      color: 'rose' },
-  { key: 'warning', label: 'Игнор/прочее', icon: AlertTriangle, color: 'amber' },
+  { key: 'error',   label: 'Ошибки',         icon: XCircle,        dot: 'bg-rose-500' },
+  { key: 'warning', label: 'Игнор/прочее',   icon: AlertTriangle,  dot: 'bg-amber-500' },
+  { key: 'success', label: 'Принятые',       icon: CheckCircle2,   dot: 'bg-emerald-500' },
 ];
 
 const STATUS_LABELS = {
@@ -18,7 +19,7 @@ const STATUS_LABELS = {
   checked_out:    'Уход',
   re_checked_out: 'Уход (перезаписан)',
   duplicate:      'Дубликат',
-  debounced:      'Игнор (дебаунс)',
+  debounced:      'Игнор',
   unknown_card:   'Неизвестная карта',
   error:          'Ошибка обработки',
 };
@@ -49,7 +50,6 @@ const Logs = () => {
     return () => clearInterval(interval);
   }, [activeTab, loadLogs]);
 
-  // Применяем фильтры на клиенте: поиск по ФИО/карте/тексту + "только сегодня"
   const filteredLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const todayStr = new Date().toISOString().slice(0, 10);
@@ -59,11 +59,7 @@ const Logs = () => {
         if (logDate !== todayStr) return false;
       }
       if (q) {
-        const haystack = [
-          log.employee_name || '',
-          log.card_id || '',
-          log.message || '',
-        ].join(' ').toLowerCase();
+        const haystack = [log.employee_name || '', log.card_id || '', log.message || ''].join(' ').toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -84,88 +80,62 @@ const Logs = () => {
   const formatDateTime = (iso) => {
     if (!iso) return '—';
     return new Date(iso).toLocaleString('ru-RU', {
-      day: '2-digit', month: '2-digit', year: 'numeric',
+      day: '2-digit', month: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
   };
 
-  const getRowColors = (result) => {
+  const getResultStyles = (result) => {
     switch (result) {
-      case 'success': return { bar: 'bg-emerald-500', tint: 'bg-emerald-50/40', icon: 'text-emerald-600 bg-emerald-100' };
-      case 'error':   return { bar: 'bg-rose-500',    tint: 'bg-rose-50/40',    icon: 'text-rose-600 bg-rose-100' };
-      case 'warning': return { bar: 'bg-amber-500',   tint: 'bg-amber-50/40',   icon: 'text-amber-600 bg-amber-100' };
-      default:        return { bar: 'bg-slate-300',   tint: 'bg-white',         icon: 'text-slate-500 bg-slate-100' };
-    }
-  };
-
-  const getStatusIcon = (result) => {
-    switch (result) {
-      case 'success': return <CheckCircle2 size={18} />;
-      case 'error':   return <ServerCrash size={18} />;
-      case 'warning': return <AlertTriangle size={18} />;
-      default:        return <ScrollText size={18} />;
+      case 'success': return { dot: 'bg-emerald-500', text: 'text-emerald-700', icon: CheckCircle2 };
+      case 'error':   return { dot: 'bg-rose-500',    text: 'text-rose-700',    icon: ServerCrash };
+      case 'warning': return { dot: 'bg-amber-500',   text: 'text-amber-700',   icon: AlertTriangle };
+      default:        return { dot: 'bg-slate-300',   text: 'text-slate-600',   icon: ScrollText };
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
+    <div className="min-h-screen px-6 md:px-8 py-6">
       {/* Header */}
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="mb-5 flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-4xl font-black text-slate-800 flex items-center gap-3">
-            <ScrollText size={32} className="text-blue-600" />
-            Логи сканирований
-          </h1>
-          <p className="text-slate-500 mt-1">Все попытки отметки: что приняли, что отклонили и почему</p>
+          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Логи сканирований</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Каждая попытка отметки: что приняли, что отклонили и почему</p>
         </div>
-
         <div className="flex gap-2">
-          <button
-            onClick={() => loadLogs(activeTab)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-white text-slate-600 rounded-xl shadow-soft hover:bg-slate-100 transition-soft"
-          >
-            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => loadLogs(activeTab)}>
             Обновить
-          </button>
-          <button
-            onClick={handleClear}
-            className="flex items-center gap-2 px-4 py-2.5 bg-white text-rose-600 rounded-xl shadow-soft hover:bg-rose-50 transition-soft"
-            title="Удалить логи старше 30 дней"
-          >
-            <Trash2 size={18} />
+          </Button>
+          <Button variant="secondary" size="sm" icon={Trash2} onClick={handleClear}>
             Очистить старые
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <div className="relative flex-1 max-w-md">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div className="flex gap-2 mb-3 flex-wrap">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             placeholder="Поиск по ФИО, карте или тексту..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-soft transition-soft"
+            className="w-full h-9 pl-8 pr-3 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
           />
         </div>
-        <button
+        <Button
+          variant={todayOnly ? 'primary' : 'secondary'}
+          size="sm"
+          icon={Calendar}
           onClick={() => setTodayOnly((v) => !v)}
-          className={`
-            flex items-center gap-2 px-4 py-3 rounded-xl font-medium shadow-soft transition-soft
-            ${todayOnly
-              ? 'bg-blue-500 text-white'
-              : 'bg-white text-slate-600 hover:bg-slate-50'}
-          `}
         >
-          <Calendar size={18} />
           Только сегодня
-        </button>
+        </Button>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-2xl p-2 shadow-soft inline-flex gap-1 mb-6">
+      <div className="border-b border-slate-200 mb-4 flex gap-0 overflow-x-auto">
         {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = activeTab === t.key;
@@ -174,13 +144,13 @@ const Logs = () => {
               key={t.key}
               onClick={() => setActiveTab(t.key)}
               className={`
-                flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-soft
+                flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 -mb-px transition-colors
                 ${isActive
-                  ? `bg-${t.color}-500 text-white shadow-soft-lg`
-                  : 'text-slate-500 hover:bg-slate-100'}
+                  ? 'border-slate-900 text-slate-900 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 font-medium'}
               `}
             >
-              <Icon size={18} />
+              <span className={`w-1.5 h-1.5 rounded-full ${t.dot}`} />
               {t.label}
             </button>
           );
@@ -188,93 +158,68 @@ const Logs = () => {
       </div>
 
       {/* List */}
-      <div className="bg-white rounded-2xl shadow-soft overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         {loading && logs.length === 0 ? (
-          <div className="p-16 text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <p className="text-slate-500">Загрузка...</p>
+          <div className="p-12 text-center">
+            <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-200 border-t-slate-900 mx-auto mb-3"></div>
+            <p className="text-sm text-slate-500">Загрузка...</p>
           </div>
         ) : filteredLogs.length === 0 ? (
-          <div className="p-16 text-center">
-            <Inbox size={64} className="mx-auto mb-4 text-slate-300" />
-            <p className="text-xl font-bold text-slate-700 mb-1">
+          <div className="p-12 text-center">
+            <Inbox size={32} className="mx-auto mb-2 text-slate-300" />
+            <p className="text-sm font-semibold text-slate-700 mb-0.5">
               {logs.length === 0 ? 'Логов нет' : 'Ничего не найдено'}
             </p>
-            <p className="text-slate-500">
+            <p className="text-xs text-slate-500">
               {logs.length === 0
                 ? (activeTab === 'success' ? 'Принятых отметок ещё не было'
-                  : activeTab === 'error' ? 'Отлично — ошибок нет!'
+                  : activeTab === 'error' ? 'Отлично — ошибок нет'
                   : 'Игнорируемых сканов не зафиксировано')
                 : 'Попробуй убрать фильтры'}
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100">
+          <ul className="divide-y divide-slate-100">
             {filteredLogs.map((log) => {
-              const colors = getRowColors(log.result);
+              const styles = getResultStyles(log.result);
+              const Icon = styles.icon;
               return (
-                <div
-                  key={log.id}
-                  className={`relative p-5 hover:bg-slate-50/70 transition-colors ${colors.tint}`}
-                >
-                  {/* левая цветная полоска */}
-                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${colors.bar}`}></div>
-
-                  <div className="flex items-start gap-4 pl-3">
-                    {/* Icon */}
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colors.icon}`}>
-                      {getStatusIcon(log.result)}
-                    </div>
-
-                    {/* Body */}
+                <li key={log.id} className="px-4 py-3 hover:bg-slate-50/60">
+                  <div className="flex items-start gap-3">
+                    <Icon size={15} className={`${styles.text} mt-0.5 flex-shrink-0`} />
                     <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1">
-                        <span className="font-black text-slate-800">
+                      <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                        <span className={`text-sm font-semibold ${styles.text}`}>
                           {STATUS_LABELS[log.status] || log.status}
                         </span>
                         {log.employee_name && (
-                          <span className="flex items-center gap-1.5 text-slate-700 font-medium text-sm">
-                            <UserRound size={14} className="text-slate-400" />
-                            {log.employee_name}
-                          </span>
+                          <span className="text-sm text-slate-700 truncate">{log.employee_name}</span>
                         )}
-                        <span className="flex items-center gap-1.5 text-slate-500 text-sm font-mono">
-                          <CreditCard size={14} />
+                        <span className="inline-flex items-center gap-1 text-xs text-slate-400 font-mono">
+                          <CreditCard size={11} />
                           {log.card_id}
                         </span>
                       </div>
-
                       {log.message && (
-                        <p className="text-sm text-slate-600 mb-2 break-words">
-                          {log.message}
-                        </p>
+                        <p className="text-xs text-slate-600 mb-1 break-words">{log.message}</p>
                       )}
-
-                      <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400 font-medium">
-                        <span className="flex items-center gap-1">
-                          <Clock size={12} />
-                          Получено сервером: {formatDateTime(log.received_at)}
-                        </span>
+                      <div className="text-[11px] text-slate-400 font-mono">
+                        получено {formatDateTime(log.received_at)}
                         {log.scan_timestamp && (
-                          <span className="flex items-center gap-1">
-                            <Clock size={12} className="text-blue-400" />
-                            Время скана: {formatDateTime(log.scan_timestamp)}
-                          </span>
+                          <> · скан {formatDateTime(log.scan_timestamp)}</>
                         )}
                       </div>
                     </div>
                   </div>
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
       </div>
 
-      {/* Footer hint */}
-      <div className="mt-4 text-xs text-slate-400 text-center">
-        Найдено: <span className="font-bold text-slate-500">{filteredLogs.length}</span>
-        {' '}из {logs.length} записей. Обновляется каждые 5 секунд.
+      <div className="mt-3 text-xs text-slate-400">
+        Найдено: <span className="font-semibold text-slate-600">{filteredLogs.length}</span> из {logs.length}. Обновление каждые 5 сек.
       </div>
     </div>
   );
