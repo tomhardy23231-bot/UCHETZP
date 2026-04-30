@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { UserPlus, Edit2, Trash2, X, CreditCard, Search, UserRound, Briefcase, Phone, DollarSign, Target, Loader2, Signal } from 'lucide-react';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getLatestAttendance, deleteAttendance } from '../api/client';
+import toast from 'react-hot-toast';
 
 const Employees = () => {
   const [employees, setEmployees] = useState([]);
@@ -124,7 +125,7 @@ const Employees = () => {
       await loadEmployees();
       closeModal();
     } catch (error) {
-      alert('Ошибка: ' + (error.response?.data?.detail || error.message));
+      toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
   }, [name, position, phone, bankAcc, rate, pointVal, cardId, editingEmployee, loadEmployees, closeModal]);
 
@@ -134,7 +135,7 @@ const Employees = () => {
         await deleteEmployee(id);
         await loadEmployees();
       } catch (error) {
-        alert('Ошибка удаления: ' + (error.response?.data?.detail || error.message));
+        toast.error('Ошибка удаления: ' + (error.response?.data?.detail || error.message));
       }
     }
   }, [loadEmployees]);

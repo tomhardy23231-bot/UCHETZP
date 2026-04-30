@@ -8,12 +8,16 @@ import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
 import Logs from './pages/Logs';
 import NotificationManager from './components/NotificationManager';
+import { TodayAttendanceProvider } from './context/TodayAttendanceContext';
+import { Toaster } from 'react-hot-toast';
 
 function App() {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   return (
     <Router>
+      <TodayAttendanceProvider>
+      <Toaster position="bottom-right" />
       <div className="flex min-h-screen bg-gray-100">
         <NotificationManager />
         {/* Боковая панель */}
@@ -31,6 +35,7 @@ function App() {
           </Routes>
         </main>
       </div>
+      </TodayAttendanceProvider>
     </Router>
   );
 }

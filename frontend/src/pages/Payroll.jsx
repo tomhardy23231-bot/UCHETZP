@@ -2,14 +2,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useReactToPrint } from 'react-to-print';
 import { useTtlLocalStorage } from '../hooks/useTtlLocalStorage';
-import { 
-  Calculator, Plus, TrendingUp, TrendingDown, Wallet, Target, Clock, X, 
-  ArrowLeft, UserRound, Briefcase, DollarSign, Timer, UserCheck, AlertTriangle, 
-  Info, Trash2, UserRoundCheck, UserRoundX, Search, Banknote, ReceiptText, 
-  History, Percent, Printer
+import {
+  Calculator, Plus, TrendingUp, TrendingDown, Wallet, Target, Clock, X,
+  ArrowLeft, UserRound, Briefcase, DollarSign, Timer, UserCheck, AlertTriangle,
+  Info, Trash2, UserRoundCheck, UserRoundX, Search, Banknote, ReceiptText,
+  History, Percent, Printer, FileSpreadsheet
 } from 'lucide-react';
+import { downloadCsv } from '../utils/exportCsv';
 import { getEmployees, calculatePayroll, createTransaction, getEmployeeTransactions, deleteTransaction, adjustHours, adjustPoints } from '../api/client';
 import PayslipTemplate from '../components/PayslipTemplate';
+import toast from 'react-hot-toast';
 
 const Payroll = () => {
   const [employees, setEmployees] = useState([]);
@@ -82,6 +84,75 @@ const Payroll = () => {
     contentRef: printRef,
     documentTitle: `Payslip - ${selectedEmployee?.name} - ${formatMonth(selectedMonth)}`,
   });
+
+  // Экспорт расчётного листа одного сотрудника
+  const exportCurrentPayslip = useCallback(() => {
+    if (!selectedEmployee || !payrollData) return;
+    const rows = [
+      ['Сотрудник', selectedEmployee.name],
+      ['Должность', selectedEmployee.position],
+      ['Месяц', formatMonth(selectedMonth)],
+      ['', ''],
+      ['Часов отработано', payrollData.total_hours_worked?.toFixed(2)],
+      ['Часовая ставка (грн)', payrollData.hourly_rate?.toFixed(2)],
+      ['Базовая зарплата (грн)', payrollData.base_rate?.toFixed(2)],
+      ['Очков', payrollData.total_points?.toFixed(2)],
+      ['Цена очка (грн)', selectedEmployee.point_val?.toFixed(2)],
+      ['Сдельная (грн)', payrollData.piecework_sum?.toFixed(2)],
+      ['Премии (грн)', payrollData.bonuses_total?.toFixed(2)],
+      ['Авансы (грн)', payrollData.advances_total?.toFixed(2)],
+      ['Штрафы (грн)', payrollData.fines_total?.toFixed(2)],
+      ['К ВЫПЛАТЕ (грн)', payrollData.to_pay?.toFixed(2)],
+    ];
+    downloadCsv(
+      `Payslip_${selectedEmployee.name}_${selectedMonth}`,
+      ['Параметр', 'Значение'],
+      rows
+    );
+    toast.success('Файл скачан');
+  }, [selectedEmployee, payrollData, selectedMonth]);
+
+  // Экспорт всех сотрудников за месяц одной таблицей
+  const exportAllPayroll = useCallback(async () => {
+    try {
+      toast.loading('Готовим файл...', { id: 'csv' });
+      const payrolls = await Promise.all(
+        employees.map((emp) => calculatePayroll(emp.id, selectedMonth))
+      );
+      const headers = [
+        'ФИО', 'Должность', 'Часов', 'Часовая ставка (грн)',
+        'База (грн)', 'Очков', 'Сдельная (грн)',
+        'Премии (грн)', 'Авансы (грн)', 'Штрафы (грн)',
+        'К ВЫПЛАТЕ (грн)', 'Номер счёта',
+      ];
+      const rows = payrolls.map((p, idx) => {
+        const emp = employees[idx];
+        return [
+          p.employee_name,
+          emp.position,
+          p.total_hours_worked?.toFixed(2),
+          p.hourly_rate?.toFixed(2),
+          p.base_rate?.toFixed(2),
+          p.total_points?.toFixed(2),
+          p.piecework_sum?.toFixed(2),
+          p.bonuses_total?.toFixed(2),
+          p.advances_total?.toFixed(2),
+          p.fines_total?.toFixed(2),
+          p.to_pay?.toFixed(2),
+          emp.bank_acc || '',
+        ];
+      });
+      // Итог
+      const totalToPay = payrolls.reduce((s, p) => s + (p.to_pay || 0), 0);
+      rows.push([]);
+      rows.push(['ИТОГО К ВЫПЛАТЕ', '', '', '', '', '', '', '', '', '', totalToPay.toFixed(2), '']);
+
+      downloadCsv(`Payroll_${selectedMonth}`, headers, rows);
+      toast.success('Файл скачан', { id: 'csv' });
+    } catch (e) {
+      toast.error('Не удалось сделать экспорт: ' + e.message, { id: 'csv' });
+    }
+  }, [employees, selectedMonth]);
 
   useEffect(() => {
     loadEmployees();
@@ -159,8 +230,9 @@ const Payroll = () => {
       await selectEmployee(selectedEmployee);
       loadTotalPayroll();
       closeAllModals();
+      toast.success('Сохранено');
     } catch (error) {
-      alert('Ошибка: ' + (error.response?.data?.detail || error.message));
+      toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
   }, [currentTransType, transAmount, transPointsCount, transComment, transDate, selectedEmployee, selectEmployee, closeAllModals, loadTotalPayroll]);
 
@@ -170,8 +242,9 @@ const Payroll = () => {
         await deleteTransaction(id);
         await selectEmployee(selectedEmployee);
         loadTotalPayroll();
+        toast.success('Запись удалена');
       } catch (error) {
-        alert('Ошибка удаления: ' + (error.response?.data?.detail || error.message));
+        toast.error('Ошибка удаления: ' + (error.response?.data?.detail || error.message));
       }
     }
   }, [selectEmployee, selectedEmployee, loadTotalPayroll]);
@@ -183,9 +256,9 @@ const Payroll = () => {
       await selectEmployee(selectedEmployee);
       loadTotalPayroll();
       closeAllModals();
-      alert(result.message);
+      toast.success(result.message);
     } catch (error) {
-      alert('Ошибка: ' + (error.response?.data?.detail || error.message));
+      toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
   }, [selectedEmployee, selectedMonth, targetHours, selectEmployee, closeAllModals, loadTotalPayroll]);
 
@@ -196,9 +269,9 @@ const Payroll = () => {
       await selectEmployee(selectedEmployee);
       loadTotalPayroll();
       closeAllModals();
-      alert(result.message);
+      toast.success(result.message);
     } catch (error) {
-      alert('Ошибка: ' + (error.response?.data?.detail || error.message));
+      toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
   }, [selectedEmployee, selectedMonth, targetPoints, selectEmployee, closeAllModals, loadTotalPayroll]);
 
@@ -509,6 +582,15 @@ const Payroll = () => {
             <div className="bg-white rounded-xl p-3 shadow-soft">
               <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="text-slate-800 font-medium focus:outline-none" />
             </div>
+            <button
+              onClick={exportAllPayroll}
+              disabled={employees.length === 0}
+              className="flex items-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-xl shadow-soft hover:bg-emerald-700 transition-soft font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Скачать таблицу всех сотрудников за месяц"
+            >
+              <FileSpreadsheet size={18} />
+              Excel
+            </button>
           </div>
         </div>
 
@@ -608,6 +690,14 @@ const Payroll = () => {
             >
                 <Printer size={20} />
                 Печать / PDF
+            </button>
+            <button
+                onClick={exportCurrentPayslip}
+                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-soft transition-soft"
+                title="Скачать в Excel"
+            >
+                <FileSpreadsheet size={20} />
+                Excel
             </button>
             <div className="bg-white px-4 py-2 rounded-xl shadow-soft font-bold text-slate-700 flex items-center gap-3">
                 <span className="text-slate-400 font-normal">Период:</span>

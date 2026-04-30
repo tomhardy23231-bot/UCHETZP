@@ -1,54 +1,29 @@
 // components/NotificationManager.jsx
-import React, { useState, useEffect, useRef } from 'react';
-import toast, { Toaster } from 'react-hot-toast';
-import { getTodayAttendance } from '../api/client';
+// Слушает изменения в общем контексте сегодняшних посещений и показывает toast +
+// проигрывает звук, когда появляется новый приход или уход. Сам по себе НЕ опрашивает
+// сервер — это делает TodayAttendanceProvider, один на всё приложение.
+import React, { useEffect, useRef } from 'react';
+import toast from 'react-hot-toast';
+import { useTodayAttendance } from '../context/TodayAttendanceContext';
 import { UserRoundCheck, UserRoundX } from 'lucide-react';
 
 const NotificationManager = () => {
-  const [prevAttendance, setPrevAttendance] = useState([]);
-  const audioRef = useRef(new Audio("/sound.mp3"));
-  const isFirstLoad = useRef(true);
+  const { attendance } = useTodayAttendance();
+  const audioRef = useRef(null);
+  const isFirstLoadRef = useRef(true);
+  const prevByIdRef = useRef(new Map());
 
-  // Load today's attendance to track changes
-  const checkForUpdates = async () => {
-    try {
-      const currentAttendance = await getTodayAttendance();
-      
-      if (isFirstLoad.current) {
-        setPrevAttendance(currentAttendance);
-        isFirstLoad.current = false;
-        return;
-      }
-
-      // Create a map for quick lookup
-      const prevMap = new Map(prevAttendance.map(r => [r.id, r]));
-
-      currentAttendance.forEach(current => {
-        const prev = prevMap.get(current.id);
-
-        if (!prev) {
-          // New record found -> Check-in
-          notify(current.employee_name, 'check-in');
-        } else if (!prev.out_time && current.out_time) {
-          // Record was updated with out_time -> Check-out
-          notify(current.employee_name, 'check-out');
-        }
-      });
-
-      setPrevAttendance(currentAttendance);
-    } catch (error) {
-      console.error('Notification error:', error);
-    }
-  };
+  // Создаём Audio один раз, лениво (не на каждый рендер)
+  if (!audioRef.current) {
+    audioRef.current = new Audio('/sound.mp3');
+  }
 
   const notify = (name, type) => {
-    // Play sound
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(e => console.error("Audio play failed:", e));
+      audioRef.current.play().catch((e) => console.error('Не удалось проиграть звук:', e));
     }
 
-    // Show toast
     if (type === 'check-in') {
       toast.custom((t) => (
         <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-white shadow-soft-lg rounded-2xl pointer-events-auto flex ring-1 ring-emerald-500/20`}>
@@ -56,13 +31,11 @@ const NotificationManager = () => {
             <div className="flex items-start">
               <div className="flex-shrink-0 pt-0.5">
                 <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-600 border border-emerald-200 shadow-soft">
-                   <UserRoundCheck size={24} />
+                  <UserRoundCheck size={24} />
                 </div>
               </div>
               <div className="ml-3 flex-1">
-                <p className="text-sm font-black text-slate-900">
-                  {name}
-                </p>
+                <p className="text-sm font-black text-slate-900">{name}</p>
                 <p className="mt-1 text-sm font-bold text-emerald-600 uppercase tracking-wider">
                   ПРИХОД НА РАБОТУ
                 </p>
@@ -86,13 +59,11 @@ const NotificationManager = () => {
             <div className="flex items-start">
               <div className="flex-shrink-0 pt-0.5">
                 <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500 border border-slate-200 shadow-soft">
-                   <UserRoundX size={24} />
+                  <UserRoundX size={24} />
                 </div>
               </div>
               <div className="ml-3 flex-1">
-                <p className="text-sm font-black text-slate-900">
-                  {name}
-                </p>
+                <p className="text-sm font-black text-slate-900">{name}</p>
                 <p className="mt-1 text-sm font-bold text-slate-500 uppercase tracking-wider">
                   УШЁЛ ДОМОЙ
                 </p>
@@ -113,16 +84,26 @@ const NotificationManager = () => {
   };
 
   useEffect(() => {
-    checkForUpdates();
-    const interval = setInterval(checkForUpdates, 3000);
-    return () => clearInterval(interval);
-  }, [prevAttendance]);
+    // Первая загрузка — просто запоминаем состояние, ничего не сигналим
+    if (isFirstLoadRef.current) {
+      prevByIdRef.current = new Map(attendance.map((r) => [r.id, r]));
+      isFirstLoadRef.current = false;
+      return;
+    }
 
-  return (
-    <>
-      <Toaster />
-    </>
-  );
+    attendance.forEach((current) => {
+      const prev = prevByIdRef.current.get(current.id);
+      if (!prev) {
+        notify(current.employee_name, 'check-in');
+      } else if (!prev.out_time && current.out_time) {
+        notify(current.employee_name, 'check-out');
+      }
+    });
+
+    prevByIdRef.current = new Map(attendance.map((r) => [r.id, r]));
+  }, [attendance]);
+
+  return null;
 };
 
 export default NotificationManager;

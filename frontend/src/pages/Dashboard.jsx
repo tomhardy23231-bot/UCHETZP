@@ -1,29 +1,60 @@
 // pages/Dashboard.jsx - Sleek Dark Mode / Glassmorphism
-import React, { useState, useEffect, useCallback } from 'react';
-import { Clock, UserCheck, UserX, LogOut, UserRoundCheck, UserRoundX, UsersRound, Timer, CheckCheck, AlertTriangle } from 'lucide-react';
-import { getTodayAttendance } from '../api/client';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Clock, UserCheck, UserX, LogOut, UserRoundCheck, UserRoundX, UsersRound, Timer, CheckCheck, AlertTriangle, AlarmClock } from 'lucide-react';
+import { useTodayAttendance } from '../context/TodayAttendanceContext';
+import { getAttendanceJournal } from '../api/client';
+
+// Стандартное время начала рабочего дня — после которого считаем опозданием.
+// Если у тебя другое — поменяй здесь.
+const LATE_THRESHOLD_HOUR = 9;
+const LATE_THRESHOLD_MIN = 0;
+
+// Если у сотрудника есть приход без ухода и уже позже этого часа — подсвечиваем красным
+const UNCLOSED_SHIFT_ALERT_HOUR = 21;
 
 const Dashboard = () => {
-  const [attendance, setAttendance] = useState([]);
+  const { attendance } = useTodayAttendance();
+  const [weekJournal, setWeekJournal] = useState([]);
+  const [now, setNow] = useState(() => new Date());
 
-  // Load today's attendance data
-  const loadAttendance = useCallback(async () => {
-    try {
-      const data = await getTodayAttendance();
-      // Sort by arrival time (newest first)
-      const sorted = data.sort((a, b) => new Date(b.in_time) - new Date(a.in_time));
-      setAttendance(sorted);
-    } catch (error) {
-      console.error('Ошибка загрузки данных:', error);
-    }
+  // обновляем "текущее время" раз в минуту, чтобы подсветка незакрытых смен реагировала на 21:00
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
   }, []);
 
+  // Подгружаем последние 7 дней для топа опоздавших
   useEffect(() => {
-    loadAttendance();
-    // Refresh data every 3 seconds for near real-time updates
-    const interval = setInterval(loadAttendance, 3000);
-    return () => clearInterval(interval);
-  }, [loadAttendance]);
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 6);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    getAttendanceJournal(fmt(start), fmt(end))
+      .then(setWeekJournal)
+      .catch((e) => console.error('Не удалось загрузить журнал недели:', e));
+  }, []);
+
+  // Топ-3 опоздавших за неделю
+  const topLate = useMemo(() => {
+    const counter = new Map();
+    weekJournal.forEach((r) => {
+      if (!r.in_time) return;
+      const [h, m] = r.in_time.split(':').map(Number);
+      const isLate =
+        h > LATE_THRESHOLD_HOUR ||
+        (h === LATE_THRESHOLD_HOUR && m > LATE_THRESHOLD_MIN);
+      if (!isLate) return;
+      const key = r.employee_name;
+      const minutesLate = (h * 60 + m) - (LATE_THRESHOLD_HOUR * 60 + LATE_THRESHOLD_MIN);
+      const cur = counter.get(key) || { name: key, count: 0, totalMinutes: 0 };
+      cur.count += 1;
+      cur.totalMinutes += minutesLate;
+      counter.set(key, cur);
+    });
+    return Array.from(counter.values())
+      .sort((a, b) => b.count - a.count || b.totalMinutes - a.totalMinutes)
+      .slice(0, 3);
+  }, [weekJournal]);
 
   // Format time
   const formatTime = (dateString) => {
@@ -146,6 +177,40 @@ const Dashboard = () => {
         </div>
       </div>
 
+      {/* Топ-3 опоздавших за неделю */}
+      {topLate.length > 0 && (
+        <div className="bg-white border border-slate-100 rounded-2xl p-6 mb-6 shadow-soft">
+          <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <AlarmClock size={20} className="text-amber-500" />
+            Топ опоздавших за 7 дней
+            <span className="text-xs font-medium text-slate-400 ml-1">
+              (опоздание = после {String(LATE_THRESHOLD_HOUR).padStart(2,'0')}:{String(LATE_THRESHOLD_MIN).padStart(2,'0')})
+            </span>
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {topLate.map((p, idx) => {
+              const palette = ['from-amber-500 to-orange-600', 'from-slate-400 to-slate-500', 'from-orange-400 to-amber-500'];
+              const totalH = Math.floor(p.totalMinutes / 60);
+              const totalM = p.totalMinutes % 60;
+              return (
+                <div key={p.name} className="relative bg-slate-50 rounded-2xl p-4 flex items-center gap-4 overflow-hidden">
+                  <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${palette[idx]} text-white font-black text-xl flex items-center justify-center shadow-soft`}>
+                    {idx + 1}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold text-slate-800 truncate">{p.name}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      <span className="font-bold text-rose-500">{p.count}</span> опозданий • суммарно{' '}
+                      <span className="font-bold">{totalH > 0 ? `${totalH}ч ` : ''}{totalM}м</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Attendance Table Container - Soft UI Card */}
       <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-soft">
         <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
@@ -195,25 +260,39 @@ const Dashboard = () => {
                   </td>
                 </tr>
               ) : (
-                attendance.map((record) => (
+                attendance.map((record) => {
+                  const isUnclosedLate =
+                    !record.out_time && now.getHours() >= UNCLOSED_SHIFT_ALERT_HOUR;
+                  return (
                   <tr
                     key={record.id}
                     className={`
                       group transition-soft
-                      ${!record.out_time ? 'bg-emerald-50/50' : 'hover:bg-slate-50'}
+                      ${isUnclosedLate
+                        ? 'bg-rose-50 ring-1 ring-rose-200'
+                        : !record.out_time
+                          ? 'bg-emerald-50/50'
+                          : 'hover:bg-slate-50'}
                     `}
                   >
                     <td className="px-8 py-5">
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center border font-bold text-sm transition-soft ${
-                          !record.out_time 
-                          ? 'bg-emerald-100 border-emerald-200 text-emerald-600 shadow-soft' 
+                          isUnclosedLate
+                          ? 'bg-rose-100 border-rose-300 text-rose-600 shadow-soft'
+                          : !record.out_time
+                          ? 'bg-emerald-100 border-emerald-200 text-emerald-600 shadow-soft'
                           : 'bg-slate-100 border-slate-200 text-slate-500'
                         }`}>
                           {record.employee_name.charAt(0).toUpperCase()}
                         </div>
-                        <div className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">
+                        <div className={`font-bold transition-colors ${isUnclosedLate ? 'text-rose-700' : 'text-slate-800 group-hover:text-blue-600'}`}>
                           {record.employee_name}
+                          {isUnclosedLate && (
+                            <span className="block text-xs font-bold text-rose-500 uppercase tracking-wider mt-0.5">
+                              ⚠ смена не закрыта
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -241,7 +320,12 @@ const Dashboard = () => {
                       </span>
                     </td>
                     <td className="px-8 py-5">
-                      {!record.out_time ? (
+                      {isUnclosedLate ? (
+                        <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-rose-100 border border-rose-300 text-rose-600 rounded-full text-xs font-black uppercase tracking-wider">
+                          <AlertTriangle size={14} className="text-rose-500" />
+                          Не закрыта
+                        </div>
+                      ) : !record.out_time ? (
                         <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-100 border border-emerald-200 text-emerald-600 rounded-full text-xs font-black uppercase tracking-wider">
                           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.3)]"></span>
                           На работе
@@ -254,7 +338,8 @@ const Dashboard = () => {
                       )}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

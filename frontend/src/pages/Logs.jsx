@@ -5,6 +5,7 @@ import {
   Trash2, Clock, CreditCard, UserRound, Inbox, ServerCrash, Search, Calendar
 } from 'lucide-react';
 import { getScanLogs, clearScanLogs } from '../api/client';
+import toast from 'react-hot-toast';
 
 const TABS = [
   { key: 'success', label: 'Принятые', icon: CheckCircle2, color: 'emerald' },
@@ -73,10 +74,10 @@ const Logs = () => {
     if (!confirm('Удалить логи старше 30 дней?')) return;
     try {
       const res = await clearScanLogs(30);
-      alert(`Удалено записей: ${res.deleted}`);
+      toast.success(`Удалено записей: ${res.deleted}`);
       loadLogs(activeTab);
     } catch (e) {
-      alert('Ошибка: ' + (e.response?.data?.detail || e.message));
+      toast.error('Ошибка: ' + (e.response?.data?.detail || e.message));
     }
   };
 

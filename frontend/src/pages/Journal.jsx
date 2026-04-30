@@ -7,6 +7,7 @@ import GridView from '../components/GridView';
 import TableView from '../components/TableView';
 import EmployeeCard from '../components/EmployeeCard';
 import AttendanceModal from '../components/AttendanceModal';
+import toast from 'react-hot-toast';
 
 
 const Journal = () => {
@@ -171,7 +172,7 @@ const Journal = () => {
       await loadAttendance();
     } catch (error) {
       console.error('Ошибка сохранения:', error);
-      alert('Ошибка сохранения: ' + (error.response?.data?.detail || error.message));
+      toast.error('Ошибка сохранения: ' + (error.response?.data?.detail || error.message));
     }
   };
 

@@ -21,9 +21,11 @@ const EmployeeCard = ({
 }) => {
   const today = new Date().toISOString().slice(0, 10);
 
-  const monthlyTotalHours = useMemo(() => {
+  // Считаем общие часы за месяц + готовим данные для мини-графика по дням
+  const { monthlyTotalHours, dailyChart } = useMemo(() => {
     let totalMinutes = 0;
-    getDaysInMonth.forEach(({ date }) => {
+    const chart = [];
+    getDaysInMonth.forEach(({ date, dayNum, isWeekend }) => {
       const draftIn = draftTimes[getDraftKey(date, employee.id, 'in')];
       const draftOut = draftTimes[getDraftKey(date, employee.id, 'out')];
       const record = getRecord(date, employee.name);
@@ -31,17 +33,20 @@ const EmployeeCard = ({
       const inTime = draftIn !== undefined ? draftIn : record?.in_time;
       const outTime = draftOut !== undefined ? draftOut : record?.out_time;
 
+      let dayHours = 0;
       if (isValidHHMM(inTime) && isValidHHMM(outTime)) {
         const duration = calculateDuration(inTime, outTime);
         if (duration) {
           const [h, m] = duration.split(':').map(Number);
+          dayHours = h + m / 60;
           totalMinutes += h * 60 + m;
         }
       }
+      chart.push({ date, dayNum, hours: dayHours, isWeekend });
     });
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
-    return hours + (minutes / 60);
+    return { monthlyTotalHours: hours + minutes / 60, dailyChart: chart };
   }, [getDaysInMonth, attendanceData, draftTimes, employee.id, employee.name, calculateDuration, getDraftKey, getRecord, isValidHHMM]);
 
   const todayRecord = getRecord(today, employee.name);
@@ -79,6 +84,37 @@ const EmployeeCard = ({
         <p className="text-5xl font-black text-slate-800 tracking-tighter">
           {monthlyTotalHours.toFixed(1)}<span className="text-3xl font-bold text-slate-400">h</span>
         </p>
+
+        {/* Mini bar chart по дням месяца */}
+        <div className="w-full mt-3 px-1">
+          <div className="flex items-end gap-[2px] h-10">
+            {dailyChart.map(({ date, hours, isWeekend }) => {
+              // 12 часов = 100% высоты бара
+              const heightPct = Math.min(100, (hours / 12) * 100);
+              const isToday = date === today;
+              let barColor = 'bg-slate-200';
+              if (hours > 0) {
+                barColor = isWeekend ? 'bg-rose-400' : 'bg-emerald-500';
+              }
+              return (
+                <div
+                  key={date}
+                  className="flex-1 flex flex-col justify-end h-full"
+                  title={`${date}: ${hours > 0 ? hours.toFixed(2) + ' ч' : 'нет данных'}`}
+                >
+                  <div
+                    className={`w-full rounded-sm transition-all ${barColor} ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                    style={{ height: hours > 0 ? `${heightPct}%` : '6%', minHeight: '2px' }}
+                  ></div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium mt-1">
+            <span>1</span>
+            <span>{dailyChart.length}</span>
+          </div>
+        </div>
       </div>
 
       {/* Today Quick Entry */}
