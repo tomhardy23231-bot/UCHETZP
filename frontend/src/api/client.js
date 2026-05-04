@@ -180,6 +180,25 @@ export const clearScanLogs = async (olderThanDays = null) => {
   return response.data;
 };
 
+// ========== ЛОГ АКТИВНОСТИ КАБИНЕТА ==========
+
+export const getCabinetActivity = async ({ eventType = null, employeeId = null, role = null, limit = 300 } = {}) => {
+  const params = new URLSearchParams();
+  if (eventType) params.append('event_type', eventType);
+  if (employeeId != null) params.append('employee_id', employeeId);
+  if (role) params.append('role', role);
+  params.append('limit', limit);
+  const response = await api.get(`/api/cabinet-activity?${params}`);
+  return response.data;
+};
+
+export const clearCabinetActivity = async (olderThanDays = null) => {
+  const params = new URLSearchParams();
+  if (olderThanDays !== null) params.append('older_than_days', olderThanDays);
+  const response = await api.delete(`/api/cabinet-activity?${params}`);
+  return response.data;
+};
+
 // ========== УПРАВЛЕНИЕ КАБИНЕТАМИ СОТРУДНИКОВ (для админа) ==========
 
 export const createEmployeeAccount = async (employeeId, username, password) => {

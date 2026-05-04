@@ -3,12 +3,12 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 import calendar
 
@@ -164,15 +164,82 @@ def _user_to_public(user: models.User) -> dict:
     }
 
 
+# ========== ЛОГИРОВАНИЕ АКТИВНОСТИ КАБИНЕТА ==========
+
+# Дедуп: не логируем одно и то же событие от того же юзера чаще раза в N минут
+_ACTIVITY_DEDUP_MINUTES = 5
+
+# Какие события дедуплицируем (login-события — никогда, надо знать каждую попытку)
+_DEDUPED_EVENTS = {"view_profile", "view_calendar", "view_payroll", "view_transactions"}
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    """Реальный IP клиента (за прокси Vercel — в X-Forwarded-For)."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
+
+
+def _log_cabinet_event(
+    db: Session,
+    request: Request,
+    event_type: str,
+    user: Optional[models.User] = None,
+    username_attempted: Optional[str] = None,
+):
+    """Пишет запись в cabinet_activity_logs. Не валит запрос если запись не удалась."""
+    try:
+        # Дедуп для view_* — пропускаем если такое же было меньше N минут назад от того же юзера
+        if user and event_type in _DEDUPED_EVENTS:
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=_ACTIVITY_DEDUP_MINUTES)
+            recent = db.query(models.CabinetActivityLog).filter(
+                models.CabinetActivityLog.user_id == user.id,
+                models.CabinetActivityLog.event_type == event_type,
+                models.CabinetActivityLog.timestamp > cutoff,
+            ).first()
+            if recent:
+                return
+
+        emp_name = None
+        if user and user.employee_id:
+            emp = crud.get_employee(db, user.employee_id)
+            if emp:
+                emp_name = emp.name
+
+        log = models.CabinetActivityLog(
+            user_id=user.id if user else None,
+            employee_id=user.employee_id if user else None,
+            role=user.role.value if user else None,
+            username_attempted=username_attempted,
+            employee_name=emp_name,
+            event_type=event_type,
+            ip_address=_client_ip(request),
+            user_agent=(request.headers.get("user-agent") or None),
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 @app.post("/api/auth/login", response_model=schemas.TokenResponse)
-def login(payload: schemas.LoginRequest, db: Session = Depends(database.get_db)):
+def login(
+    payload: schemas.LoginRequest,
+    request: Request,
+    db: Session = Depends(database.get_db),
+):
     """Логин по username/password. Возвращает JWT-токен и данные пользователя."""
     user = db.query(models.User).filter(models.User.username == payload.username).first()
     if not user or not auth.verify_password(payload.password, user.password_hash):
+        _log_cabinet_event(db, request, "login_failed", username_attempted=payload.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный логин или пароль",
         )
+    _log_cabinet_event(db, request, "login_success", user=user)
     token = auth.create_access_token(user.id)
     return {
         "access_token": token,
@@ -278,11 +345,11 @@ def auth_status():
 # ========== ЛИЧНЫЙ КАБИНЕТ СОТРУДНИКА (read-only) ==========
 # Все /api/me/* берут employee_id из JWT — сотрудник видит только своё.
 
-def _get_my_employee(
-    current_user: models.User = Depends(auth.require_employee),
-    db: Session = Depends(database.get_db),
+def _resolve_my_employee(
+    current_user: models.User,
+    db: Session,
 ) -> models.Employee:
-    """Резолвит сотрудника, привязанного к текущему пользователю-кабинету."""
+    """Хелпер (не Depends): резолвит сотрудника привязанного к текущему юзеру-кабинету."""
     employee = crud.get_employee(db, current_user.employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail="Профиль сотрудника не найден")
@@ -290,19 +357,28 @@ def _get_my_employee(
 
 
 @app.get("/api/me/profile", response_model=schemas.Employee)
-def get_my_profile(employee: models.Employee = Depends(_get_my_employee)):
+def get_my_profile(
+    request: Request,
+    current_user: models.User = Depends(auth.require_employee),
+    db: Session = Depends(database.get_db),
+):
     """Профиль текущего сотрудника."""
+    employee = _resolve_my_employee(current_user, db)
+    _log_cabinet_event(db, request, "view_profile", user=current_user)
     return employee
 
 
 @app.get("/api/me/attendance", response_model=List[schemas.JournalEntry])
 def get_my_attendance(
+    request: Request,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    current_user: models.User = Depends(auth.require_employee),
     db: Session = Depends(database.get_db),
-    employee: models.Employee = Depends(_get_my_employee),
 ):
     """Календарь посещаемости текущего сотрудника за период (по умолчанию — текущий месяц)."""
+    employee = _resolve_my_employee(current_user, db)
+    _log_cabinet_event(db, request, "view_calendar", user=current_user)
     if start_date is None or end_date is None:
         now = datetime.now()
         start_date = now.strftime("%Y-%m-01")
@@ -337,11 +413,14 @@ def get_my_attendance(
 
 @app.get("/api/me/payroll", response_model=schemas.PayrollCalculation)
 def get_my_payroll(
+    request: Request,
     month: Optional[str] = None,  # YYYY-MM, по умолчанию — текущий
+    current_user: models.User = Depends(auth.require_employee),
     db: Session = Depends(database.get_db),
-    employee: models.Employee = Depends(_get_my_employee),
 ):
     """Расчёт зарплаты текущего сотрудника за месяц."""
+    employee = _resolve_my_employee(current_user, db)
+    _log_cabinet_event(db, request, "view_payroll", user=current_user)
     if month is None:
         month = crud.get_current_month_str()
     return _compute_payroll(db, employee, month)
@@ -349,11 +428,14 @@ def get_my_payroll(
 
 @app.get("/api/me/transactions", response_model=List[schemas.FinancialTransaction])
 def get_my_transactions(
+    request: Request,
     month: Optional[str] = None,  # YYYY-MM фильтр (опционально)
+    current_user: models.User = Depends(auth.require_employee),
     db: Session = Depends(database.get_db),
-    employee: models.Employee = Depends(_get_my_employee),
 ):
     """Финансовые транзакции (премии/авансы/штрафы/очки) текущего сотрудника."""
+    employee = _resolve_my_employee(current_user, db)
+    _log_cabinet_event(db, request, "view_transactions", user=current_user)
     if month:
         return crud.get_transactions_by_employee_and_month(db, employee.id, month)
     return db.query(models.FinancialTransaction).filter(
@@ -852,7 +934,6 @@ def clear_scan_logs(
     """
     Очистить логи. Если передан older_than_days — удаляет старше N дней. Иначе все.
     """
-    from datetime import timedelta
     if older_than_days is not None:
         cutoff = datetime.now() - timedelta(days=older_than_days)
         deleted = db.query(models.AttendanceLog).filter(
@@ -860,6 +941,46 @@ def clear_scan_logs(
         ).delete()
     else:
         deleted = db.query(models.AttendanceLog).delete()
+    db.commit()
+    return {"deleted": deleted}
+
+
+# ========== ЭНДПОИНТЫ ДЛЯ ЛОГА АКТИВНОСТИ КАБИНЕТА ==========
+
+@app.get("/api/cabinet-activity", response_model=List[schemas.CabinetActivityEntry])
+def get_cabinet_activity(
+    event_type: Optional[str] = None,
+    employee_id: Optional[int] = None,
+    role: Optional[str] = None,  # 'admin' | 'employee'
+    limit: int = 300,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Логи активности кабинета: логины + просмотры разделов кабинета."""
+    query = db.query(models.CabinetActivityLog)
+    if event_type:
+        query = query.filter(models.CabinetActivityLog.event_type == event_type)
+    if employee_id is not None:
+        query = query.filter(models.CabinetActivityLog.employee_id == employee_id)
+    if role:
+        query = query.filter(models.CabinetActivityLog.role == role)
+    return query.order_by(models.CabinetActivityLog.timestamp.desc()).limit(limit).all()
+
+
+@app.delete("/api/cabinet-activity")
+def clear_cabinet_activity(
+    older_than_days: Optional[int] = None,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Очистить лог активности. older_than_days — удаляет старше N дней. Иначе всё."""
+    if older_than_days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        deleted = db.query(models.CabinetActivityLog).filter(
+            models.CabinetActivityLog.timestamp < cutoff
+        ).delete()
+    else:
+        deleted = db.query(models.CabinetActivityLog).delete()
     db.commit()
     return {"deleted": deleted}
 

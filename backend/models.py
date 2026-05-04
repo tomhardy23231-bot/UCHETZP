@@ -115,6 +115,24 @@ class AttendanceLog(Base):
     message = Column(String, nullable=True)  # человеческое объяснение причины
 
 
+class CabinetActivityLog(Base):
+    """Лог активности кабинета: кто/когда зашёл, что смотрел, с какого IP/браузера."""
+    __tablename__ = "cabinet_activity_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    user_id = Column(Integer, nullable=True, index=True)  # NULL для login_failed
+    employee_id = Column(Integer, nullable=True, index=True)  # NULL для admin/login_failed
+    role = Column(String, nullable=True)  # admin/employee/None для failed
+    username_attempted = Column(String, nullable=True)  # для login_failed
+    employee_name = Column(String, nullable=True)  # снимок ФИО на момент события
+    event_type = Column(String, nullable=False, index=True)
+    # event_type: login_success | login_failed | view_profile | view_calendar
+    #             | view_payroll | view_transactions
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+
+
 class User(Base):
     """Пользователь системы (админ или сотрудник с личным кабинетом)."""
     __tablename__ = "users"

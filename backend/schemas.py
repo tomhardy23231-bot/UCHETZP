@@ -228,3 +228,22 @@ class UpdateEmployeeAccountRequest(BaseModel):
     """Изменить логин и/или пароль кабинета сотрудника."""
     username: Optional[str] = Field(None, min_length=3, max_length=50)
     password: Optional[str] = Field(None, min_length=4, max_length=100)
+
+
+# ========== СХЕМЫ ЛОГА АКТИВНОСТИ КАБИНЕТА ==========
+
+class CabinetActivityEntry(BaseModel):
+    """Запись лога активности кабинета."""
+    id: int
+    timestamp: datetime
+    user_id: Optional[int] = None
+    employee_id: Optional[int] = None
+    role: Optional[str] = None
+    username_attempted: Optional[str] = None
+    employee_name: Optional[str] = None
+    event_type: str
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+
+    class Config:
+        from_attributes = True
