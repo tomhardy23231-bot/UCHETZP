@@ -2,7 +2,10 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Lock, User, Eye, EyeOff, Loader2, Building2 } from 'lucide-react';
+import {
+  Lock, User, Eye, EyeOff, Loader2, Building2,
+  CalendarDays, Wallet, Timer,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import Button from '../components/ui/Button';
 
@@ -33,16 +36,42 @@ const Login = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex flex-col items-center mb-8">
+        {/* Logo + заголовок */}
+        <div className="flex flex-col items-center mb-6">
           <div className="w-12 h-12 bg-slate-900 rounded-lg flex items-center justify-center mb-4">
             <Building2 size={22} className="text-white" />
           </div>
-          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Учёт ЗП</h1>
-          <p className="text-sm text-slate-500 mt-1">Войдите в систему</p>
+          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Личный кабинет</h1>
+          <p className="text-sm text-slate-500 mt-1 text-center">
+            Учёт рабочего времени и зарплаты
+          </p>
         </div>
 
-        {/* Card */}
+        {/* Что внутри — 3 пункта */}
+        <div className="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-3">
+            Внутри вы увидите
+          </p>
+          <div className="space-y-2.5">
+            <FeatureRow
+              icon={<CalendarDays size={16} />}
+              title="Календарь смен"
+              desc="Когда вы приходили и уходили — все ваши смены за месяц"
+            />
+            <FeatureRow
+              icon={<Wallet size={16} />}
+              title="Расчёт зарплаты"
+              desc="Сколько отработано и сколько начислено за месяц"
+            />
+            <FeatureRow
+              icon={<Timer size={16} />}
+              title="Статистика"
+              desc="Часы, премии, авансы, штрафы и итог к выплате"
+            />
+          </div>
+        </div>
+
+        {/* Card с формой логина */}
         <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -102,12 +131,25 @@ const Login = () => {
           </form>
         </div>
 
-        <p className="text-center text-xs text-slate-400 mt-6">
-          Нет доступа? Обратитесь к администратору.
+        <p className="text-center text-xs text-slate-400 mt-5">
+          Логин и пароль выдаёт администратор.<br />
+          Нет доступа? Обратитесь к нему.
         </p>
       </div>
     </div>
   );
 };
+
+const FeatureRow = ({ icon, title, desc }) => (
+  <div className="flex items-start gap-3">
+    <div className="w-7 h-7 bg-slate-100 rounded-md flex items-center justify-center text-slate-600 flex-shrink-0 mt-0.5">
+      {icon}
+    </div>
+    <div className="min-w-0 flex-1">
+      <p className="text-sm font-semibold text-slate-800 leading-tight">{title}</p>
+      <p className="text-xs text-slate-500 leading-snug mt-0.5">{desc}</p>
+    </div>
+  </div>
+);
 
 export default Login;
