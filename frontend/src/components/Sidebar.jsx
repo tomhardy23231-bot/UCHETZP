@@ -4,12 +4,14 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Menu, X, LayoutDashboard, BookUser, Users, Calculator,
-  ScrollText, ChevronLeft, ChevronRight,
+  ScrollText, ChevronLeft, ChevronRight, LogOut,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
+  const { user, logout } = useAuth();
 
   const menuItems = [
     { path: '/',          icon: LayoutDashboard, label: 'Дашборд' },
@@ -91,8 +93,27 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
             </ul>
           </nav>
 
-          {/* Collapse */}
-          <div className="px-2 py-2 border-t border-slate-100">
+          {/* User + actions */}
+          <div className="px-2 py-2 border-t border-slate-100 space-y-1">
+            {user && !isCollapsed && (
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-md">
+                <div className="w-6 h-6 bg-slate-900 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
+                  {user.username.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-slate-700 truncate">{user.username}</div>
+                  <div className="text-[10px] text-slate-400">{user.role === 'admin' ? 'Администратор' : 'Сотрудник'}</div>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={logout}
+              title={isCollapsed ? 'Выйти' : ''}
+              className="w-full flex items-center justify-center gap-2 px-2 py-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 rounded-md text-xs transition-colors"
+            >
+              <LogOut size={14} />
+              {!isCollapsed && <span>Выйти</span>}
+            </button>
             <button
               onClick={() => setIsCollapsed(!isCollapsed)}
               className="w-full flex items-center justify-center gap-2 px-2 py-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 rounded-md text-xs transition-colors"

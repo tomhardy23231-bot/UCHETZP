@@ -14,6 +14,12 @@ class TransactionType(enum.Enum):
     POINTS = "points"     # Сдельная работа (очки)
 
 
+class UserRole(enum.Enum):
+    """Роли пользователей системы."""
+    ADMIN = "admin"        # Владелец системы — полный доступ
+    EMPLOYEE = "employee"  # Сотрудник — только свой личный кабинет
+
+
 class Employee(Base):
     """Модель сотрудника."""
     __tablename__ = "employees"
@@ -31,6 +37,12 @@ class Employee(Base):
     attendance_records = relationship("Attendance", back_populates="employee", cascade="all, delete-orphan")
     financial_transactions = relationship("FinancialTransaction", back_populates="employee", cascade="all, delete-orphan")
     salary_snapshots = relationship("SalarySnapshot", back_populates="employee", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="employee", uselist=False, cascade="all, delete-orphan")
+
+    @property
+    def account_username(self) -> "str | None":
+        """Логин личного кабинета сотрудника (None если кабинет не создан)."""
+        return self.user.username if self.user else None
 
 
 class Attendance(Base):
@@ -96,3 +108,17 @@ class AttendanceLog(Base):
     status = Column(String, nullable=False, index=True)  # checked_in / checked_out / re_checked_out / debounced / duplicate / unknown_card / error
     result = Column(String, nullable=False, index=True)  # success / warning / error
     message = Column(String, nullable=True)  # человеческое объяснение причины
+
+
+class User(Base):
+    """Пользователь системы (админ или сотрудник с личным кабинетом)."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    role = Column(Enum(UserRole), nullable=False, default=UserRole.EMPLOYEE)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, unique=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    employee = relationship("Employee", back_populates="user")

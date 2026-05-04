@@ -37,6 +37,7 @@ class EmployeeUpdate(BaseModel):
 class Employee(EmployeeBase):
     """Схема сотрудника с ID."""
     id: int
+    account_username: Optional[str] = None  # Логин личного кабинета (None если не создан)
 
     class Config:
         from_attributes = True
@@ -191,3 +192,38 @@ class AttendanceLogEntry(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ========== СХЕМЫ ДЛЯ АУТЕНТИФИКАЦИИ ==========
+
+class LoginRequest(BaseModel):
+    """Запрос на вход."""
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class UserPublic(BaseModel):
+    """Публичные данные пользователя (без пароля)."""
+    id: int
+    username: str
+    role: str  # 'admin' | 'employee'
+    employee_id: Optional[int] = None
+
+
+class TokenResponse(BaseModel):
+    """Ответ на успешный логин."""
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic
+
+
+class CreateEmployeeAccountRequest(BaseModel):
+    """Создать личный кабинет для сотрудника (ввод логина/пароля админом)."""
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=4, max_length=100)
+
+
+class UpdateEmployeeAccountRequest(BaseModel):
+    """Изменить логин и/или пароль кабинета сотрудника."""
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
+    password: Optional[str] = Field(None, min_length=4, max_length=100)

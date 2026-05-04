@@ -3,10 +3,12 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   UserPlus, Edit2, Trash2, X, CreditCard, Search, UserRound, Briefcase,
   Phone, DollarSign, Target, Loader2, Signal, LayoutGrid, List,
+  KeyRound, UserCog, Eye, EyeOff,
 } from 'lucide-react';
 import {
   getEmployees, createEmployee, updateEmployee, deleteEmployee,
   getLatestAttendance,
+  createEmployeeAccount, updateEmployeeAccount, deleteEmployeeAccount,
 } from '../api/client';
 import toast from 'react-hot-toast';
 import Button from '../components/ui/Button';
@@ -31,6 +33,13 @@ const Employees = () => {
 
   const [isPolling, setIsPolling] = useState(false);
   const pollingRef = useRef(null);
+
+  // Управление личным кабинетом сотрудника
+  const [accountTarget, setAccountTarget] = useState(null);
+  const [accountUsername, setAccountUsername] = useState('');
+  const [accountPassword, setAccountPassword] = useState('');
+  const [accountShowPwd, setAccountShowPwd] = useState(false);
+  const [accountSaving, setAccountSaving] = useState(false);
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
@@ -122,6 +131,65 @@ const Employees = () => {
     }
   };
 
+  const openAccountModal = (employee) => {
+    setAccountTarget(employee);
+    setAccountUsername(employee.account_username || '');
+    setAccountPassword('');
+    setAccountShowPwd(false);
+  };
+
+  const closeAccountModal = () => {
+    setAccountTarget(null);
+    setAccountUsername('');
+    setAccountPassword('');
+    setAccountSaving(false);
+  };
+
+  const submitAccount = async (e) => {
+    e.preventDefault();
+    if (!accountTarget) return;
+    const hasAccount = !!accountTarget.account_username;
+    setAccountSaving(true);
+    try {
+      if (hasAccount) {
+        const payload = {};
+        if (accountUsername && accountUsername !== accountTarget.account_username) payload.username = accountUsername;
+        if (accountPassword) payload.password = accountPassword;
+        if (Object.keys(payload).length === 0) { closeAccountModal(); return; }
+        await updateEmployeeAccount(accountTarget.id, payload);
+        toast.success('Кабинет обновлён');
+      } else {
+        if (!accountUsername || !accountPassword) {
+          toast.error('Введите логин и пароль');
+          setAccountSaving(false);
+          return;
+        }
+        await createEmployeeAccount(accountTarget.id, accountUsername, accountPassword);
+        toast.success('Кабинет создан');
+      }
+      await loadEmployees();
+      closeAccountModal();
+    } catch (err) {
+      toast.error('Ошибка: ' + (err.response?.data?.detail || err.message));
+      setAccountSaving(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!accountTarget) return;
+    if (!confirm(`Удалить личный кабинет «${accountTarget.name}»? Сотрудник останется, удалится только доступ.`)) return;
+    setAccountSaving(true);
+    try {
+      await deleteEmployeeAccount(accountTarget.id);
+      toast.success('Кабинет удалён');
+      await loadEmployees();
+      closeAccountModal();
+    } catch (err) {
+      toast.error('Ошибка: ' + (err.response?.data?.detail || err.message));
+      setAccountSaving(false);
+    }
+  };
+
   const filteredEmployees = employees.filter((emp) =>
     emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     emp.position.toLowerCase().includes(searchQuery.toLowerCase())
@@ -192,9 +260,10 @@ const Employees = () => {
                   <th className="text-left font-medium px-4 py-2">Должность</th>
                   <th className="text-left font-medium px-4 py-2">Телефон</th>
                   <th className="text-left font-medium px-4 py-2">Карта</th>
+                  <th className="text-left font-medium px-4 py-2">Кабинет</th>
                   <th className="text-right font-medium px-4 py-2">Ставка</th>
                   <th className="text-right font-medium px-4 py-2">Очко</th>
-                  <th className="w-20"></th>
+                  <th className="w-24"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -215,6 +284,20 @@ const Employees = () => {
                           {emp.card_id.slice(0, 8)}...
                         </span>
                       ) : <span className="text-slate-300 text-xs">не привязана</span>}
+                    </td>
+                    <td className="px-4 py-2">
+                      <button
+                        onClick={() => openAccountModal(emp)}
+                        className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded transition-colors ${
+                          emp.account_username
+                            ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                            : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+                        }`}
+                        title={emp.account_username ? `Логин: ${emp.account_username}` : 'Создать кабинет'}
+                      >
+                        {emp.account_username ? <KeyRound size={12} /> : <UserCog size={12} />}
+                        {emp.account_username || 'нет'}
+                      </button>
                     </td>
                     <td className="px-4 py-2 text-right font-mono text-slate-700">{emp.rate.toFixed(0)}</td>
                     <td className="px-4 py-2 text-right font-mono text-slate-700">{emp.point_val.toFixed(2)}</td>
@@ -263,6 +346,18 @@ const Employees = () => {
                   <div className="font-mono text-slate-700">{emp.point_val.toFixed(2)} ₴</div>
                 </div>
               </div>
+              <button
+                onClick={() => openAccountModal(emp)}
+                className={`w-full mb-3 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  emp.account_username
+                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                    : 'bg-slate-50 text-slate-500 hover:bg-slate-100 border border-dashed border-slate-300'
+                }`}
+                title={emp.account_username ? `Логин: ${emp.account_username}` : 'Создать кабинет'}
+              >
+                {emp.account_username ? <KeyRound size={12} /> : <UserCog size={12} />}
+                <span className="truncate">{emp.account_username ? `Кабинет: ${emp.account_username}` : 'Создать кабинет'}</span>
+              </button>
               <div className="flex gap-1.5 pt-3 border-t border-slate-100">
                 <Button variant="secondary" size="xs" icon={Edit2} onClick={() => openEditModal(emp)} className="flex-1">
                   Изменить
@@ -371,6 +466,104 @@ const Employees = () => {
             <Button type="submit" variant="primary">{editingEmployee ? 'Сохранить' : 'Добавить'}</Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Модалка управления личным кабинетом сотрудника */}
+      <Modal
+        open={!!accountTarget}
+        onClose={accountSaving ? undefined : closeAccountModal}
+        title={accountTarget?.account_username ? 'Кабинет сотрудника' : 'Создать кабинет'}
+        icon={accountTarget?.account_username ? KeyRound : UserCog}
+        size="md"
+      >
+        {accountTarget && (
+          <form onSubmit={submitAccount} className="p-5 space-y-4">
+            <div className="bg-slate-50 rounded-md px-3 py-2.5 border border-slate-100">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Сотрудник</p>
+              <p className="text-sm font-semibold text-slate-900">{accountTarget.name}</p>
+              <p className="text-xs text-slate-500">{accountTarget.position}</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Логин {!accountTarget.account_username && <span className="text-rose-500">*</span>}
+              </label>
+              <input
+                type="text"
+                value={accountUsername}
+                onChange={(e) => setAccountUsername(e.target.value.trim())}
+                required={!accountTarget.account_username}
+                minLength={3}
+                maxLength={50}
+                autoComplete="off"
+                className="w-full h-10 px-3 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                placeholder="ivanov"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Пароль {!accountTarget.account_username && <span className="text-rose-500">*</span>}
+                {accountTarget.account_username && <span className="text-slate-400 normal-case font-normal ml-1">(пусто = не менять)</span>}
+              </label>
+              <div className="relative">
+                <input
+                  type={accountShowPwd ? 'text' : 'password'}
+                  value={accountPassword}
+                  onChange={(e) => setAccountPassword(e.target.value)}
+                  required={!accountTarget.account_username}
+                  minLength={4}
+                  maxLength={100}
+                  autoComplete="new-password"
+                  className="w-full h-10 pl-3 pr-10 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setAccountShowPwd((s) => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700"
+                >
+                  {accountShowPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-between gap-2 pt-3 border-t border-slate-100">
+              {accountTarget.account_username ? (
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="md"
+                  icon={Trash2}
+                  onClick={handleDeleteAccount}
+                  disabled={accountSaving}
+                >
+                  Удалить кабинет
+                </Button>
+              ) : <span className="hidden sm:block" />}
+
+              <div className="flex gap-2 sm:ml-auto">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={closeAccountModal}
+                  disabled={accountSaving}
+                  className="flex-1 sm:flex-none"
+                >
+                  Отмена
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={accountSaving}
+                  className="flex-1 sm:flex-none"
+                >
+                  {accountSaving ? <Loader2 className="animate-spin" size={16} /> : (accountTarget.account_username ? 'Сохранить' : 'Создать')}
+                </Button>
+              </div>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   );

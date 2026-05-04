@@ -12,6 +12,43 @@ const api = axios.create({
   },
 });
 
+// Подставляем JWT-токен в каждый запрос (если есть в localStorage)
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// При 401 — выкидываем на /login (токен истёк или невалиден)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      const onLogin = window.location.pathname === '/login';
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      if (!onLogin) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// ========== АУТЕНТИФИКАЦИЯ ==========
+
+export const login = async (username, password) => {
+  const response = await api.post('/api/auth/login', { username, password });
+  return response.data;
+};
+
+export const getMe = async () => {
+  const response = await api.get('/api/auth/me');
+  return response.data;
+};
+
 // ========== СОТРУДНИКИ ==========
 
 export const getEmployees = async () => {
@@ -140,6 +177,53 @@ export const clearScanLogs = async (olderThanDays = null) => {
   const params = new URLSearchParams();
   if (olderThanDays !== null) params.append('older_than_days', olderThanDays);
   const response = await api.delete(`/api/scan-logs?${params}`);
+  return response.data;
+};
+
+// ========== УПРАВЛЕНИЕ КАБИНЕТАМИ СОТРУДНИКОВ (для админа) ==========
+
+export const createEmployeeAccount = async (employeeId, username, password) => {
+  const response = await api.post(`/api/employees/${employeeId}/account`, { username, password });
+  return response.data;
+};
+
+export const updateEmployeeAccount = async (employeeId, { username, password }) => {
+  const payload = {};
+  if (username) payload.username = username;
+  if (password) payload.password = password;
+  const response = await api.put(`/api/employees/${employeeId}/account`, payload);
+  return response.data;
+};
+
+export const deleteEmployeeAccount = async (employeeId) => {
+  const response = await api.delete(`/api/employees/${employeeId}/account`);
+  return response.data;
+};
+
+// ========== ЛИЧНЫЙ КАБИНЕТ СОТРУДНИКА (для роли employee) ==========
+
+export const getMyProfile = async () => {
+  const response = await api.get('/api/me/profile');
+  return response.data;
+};
+
+export const getMyAttendance = async (startDate, endDate) => {
+  const params = new URLSearchParams();
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  const response = await api.get(`/api/me/attendance?${params}`);
+  return response.data;
+};
+
+export const getMyPayroll = async (month) => {
+  const params = month ? `?month=${month}` : '';
+  const response = await api.get(`/api/me/payroll${params}`);
+  return response.data;
+};
+
+export const getMyTransactions = async (month = null) => {
+  const params = month ? `?month=${month}` : '';
+  const response = await api.get(`/api/me/transactions${params}`);
   return response.data;
 };
 

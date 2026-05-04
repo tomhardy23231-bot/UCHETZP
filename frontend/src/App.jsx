@@ -7,23 +7,22 @@ import Journal from './pages/Journal';
 import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
 import Logs from './pages/Logs';
+import Login from './pages/Login';
 import NotificationManager from './components/NotificationManager';
+import ProtectedRoute from './components/ProtectedRoute';
 import { TodayAttendanceProvider } from './context/TodayAttendanceContext';
 import { Toaster } from 'react-hot-toast';
+import CabinetLayout from './pages/cabinet/CabinetLayout';
 
-function App() {
+// Layout админки — сайдбар + основной контент. Только для роли admin.
+function AdminLayout() {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   return (
-    <Router>
-      <TodayAttendanceProvider>
-      <Toaster position="bottom-right" />
+    <TodayAttendanceProvider>
       <div className="flex min-h-screen bg-slate-50">
         <NotificationManager />
-        {/* Боковая панель */}
         <Sidebar isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
-
-        {/* Основной контент - с учётом сворачиваемой боковой панели */}
         <main className={`flex-1 transition-all duration-200 ${isCollapsed ? 'lg:ml-14' : 'lg:ml-56'}`}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
@@ -35,7 +34,33 @@ function App() {
           </Routes>
         </main>
       </div>
-      </TodayAttendanceProvider>
+    </TodayAttendanceProvider>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <Toaster position="bottom-right" />
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/cabinet/*"
+          element={
+            <ProtectedRoute employeeOnly>
+              <CabinetLayout />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/*"
+          element={
+            <ProtectedRoute adminOnly>
+              <AdminLayout />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
     </Router>
   );
 }

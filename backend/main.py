@@ -16,6 +16,7 @@ import database
 import models
 import schemas
 import crud
+import auth
 
 # Глобальная переменная для временного хранения ID неизвестной карты (для регистрации новых сотрудников)
 latest_scanned_card = None
@@ -29,6 +30,12 @@ app = FastAPI(
     description="Система учёта посещаемости и расчёта заработной платы",
     version="1.0.0"
 )
+
+
+@app.on_event("startup")
+def on_startup():
+    """Создаём админ-пользователя из ENV-переменных при первом запуске."""
+    auth.seed_admin()
 
 # Настройка CORS для разрешения запросов с фронтенда
 app.add_middleware(
@@ -57,17 +64,147 @@ def read_root():
     }
 
 
+# ========== ЭНДПОИНТЫ ДЛЯ АУТЕНТИФИКАЦИИ ==========
+
+def _user_to_public(user: models.User) -> dict:
+    """Преобразует ORM-юзера в публичный словарь (без хеша пароля)."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role.value,
+        "employee_id": user.employee_id,
+    }
+
+
+@app.post("/api/auth/login", response_model=schemas.TokenResponse)
+def login(payload: schemas.LoginRequest, db: Session = Depends(database.get_db)):
+    """Логин по username/password. Возвращает JWT-токен и данные пользователя."""
+    user = db.query(models.User).filter(models.User.username == payload.username).first()
+    if not user or not auth.verify_password(payload.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный логин или пароль",
+        )
+    token = auth.create_access_token(user.id)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": _user_to_public(user),
+    }
+
+
+@app.get("/api/auth/me", response_model=schemas.UserPublic)
+def get_me(current_user: models.User = Depends(auth.get_current_user)):
+    """Текущий пользователь (по JWT-токену из Authorization-заголовка)."""
+    return _user_to_public(current_user)
+
+
+# ========== ЛИЧНЫЙ КАБИНЕТ СОТРУДНИКА (read-only) ==========
+# Все /api/me/* берут employee_id из JWT — сотрудник видит только своё.
+
+def _get_my_employee(
+    current_user: models.User = Depends(auth.require_employee),
+    db: Session = Depends(database.get_db),
+) -> models.Employee:
+    """Резолвит сотрудника, привязанного к текущему пользователю-кабинету."""
+    employee = crud.get_employee(db, current_user.employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Профиль сотрудника не найден")
+    return employee
+
+
+@app.get("/api/me/profile", response_model=schemas.Employee)
+def get_my_profile(employee: models.Employee = Depends(_get_my_employee)):
+    """Профиль текущего сотрудника."""
+    return employee
+
+
+@app.get("/api/me/attendance", response_model=List[schemas.JournalEntry])
+def get_my_attendance(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(database.get_db),
+    employee: models.Employee = Depends(_get_my_employee),
+):
+    """Календарь посещаемости текущего сотрудника за период (по умолчанию — текущий месяц)."""
+    if start_date is None or end_date is None:
+        now = datetime.now()
+        start_date = now.strftime("%Y-%m-01")
+        last_day = calendar.monthrange(now.year, now.month)[1]
+        end_date = now.strftime(f"%Y-%m-{last_day:02d}")
+
+    records = db.query(models.Attendance).filter(
+        models.Attendance.employee_id == employee.id,
+        models.Attendance.date >= start_date,
+        models.Attendance.date <= end_date,
+    ).order_by(models.Attendance.date.desc()).all()
+
+    result = []
+    for record in records:
+        total_hours = None
+        if record.out_time:
+            total_hours = crud.calculate_duration(record.in_time, record.out_time)
+
+        in_time_str = record.in_time.strftime("%H:%M") if record.in_time else None
+        out_time_str = record.out_time.strftime("%H:%M") if record.out_time else None
+
+        result.append({
+            "id": record.id,
+            "date": record.date,
+            "employee_name": employee.name,
+            "in_time": in_time_str,
+            "out_time": out_time_str,
+            "total_hours": total_hours,
+        })
+    return result
+
+
+@app.get("/api/me/payroll", response_model=schemas.PayrollCalculation)
+def get_my_payroll(
+    month: Optional[str] = None,  # YYYY-MM, по умолчанию — текущий
+    db: Session = Depends(database.get_db),
+    employee: models.Employee = Depends(_get_my_employee),
+):
+    """Расчёт зарплаты текущего сотрудника за месяц."""
+    if month is None:
+        month = crud.get_current_month_str()
+    return _compute_payroll(db, employee, month)
+
+
+@app.get("/api/me/transactions", response_model=List[schemas.FinancialTransaction])
+def get_my_transactions(
+    month: Optional[str] = None,  # YYYY-MM фильтр (опционально)
+    db: Session = Depends(database.get_db),
+    employee: models.Employee = Depends(_get_my_employee),
+):
+    """Финансовые транзакции (премии/авансы/штрафы/очки) текущего сотрудника."""
+    if month:
+        return crud.get_transactions_by_employee_and_month(db, employee.id, month)
+    return db.query(models.FinancialTransaction).filter(
+        models.FinancialTransaction.employee_id == employee.id
+    ).order_by(models.FinancialTransaction.date.desc()).all()
+
+
 # ========== ЭНДПОИНТЫ ДЛЯ СОТРУДНИКОВ ==========
 
 @app.get("/api/employees", response_model=List[schemas.Employee])
-def get_employees(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db)):
+def get_employees(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Получить список всех сотрудников."""
     employees = crud.get_employees(db, skip=skip, limit=limit)
     return employees
 
 
 @app.get("/api/employees/{employee_id}", response_model=schemas.Employee)
-def get_employee(employee_id: int, db: Session = Depends(database.get_db)):
+def get_employee(
+    employee_id: int,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Получить сотрудника по ID."""
     employee = crud.get_employee(db, employee_id=employee_id)
     if employee is None:
@@ -76,7 +213,11 @@ def get_employee(employee_id: int, db: Session = Depends(database.get_db)):
 
 
 @app.post("/api/employees", response_model=schemas.Employee, status_code=status.HTTP_201_CREATED)
-def create_employee(employee: schemas.EmployeeCreate, db: Session = Depends(database.get_db)):
+def create_employee(
+    employee: schemas.EmployeeCreate,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Создать нового сотрудника."""
     return crud.create_employee(db=db, employee=employee)
 
@@ -85,7 +226,8 @@ def create_employee(employee: schemas.EmployeeCreate, db: Session = Depends(data
 def update_employee(
     employee_id: int,
     employee: schemas.EmployeeUpdate,
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
 ):
     """Обновить данные сотрудника."""
     db_employee = crud.update_employee(db, employee_id=employee_id, employee=employee)
@@ -95,7 +237,11 @@ def update_employee(
 
 
 @app.delete("/api/employees/{employee_id}")
-def delete_employee(employee_id: int, db: Session = Depends(database.get_db)):
+def delete_employee(
+    employee_id: int,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Удалить сотрудника."""
     success = crud.delete_employee(db, employee_id=employee_id)
     if not success:
@@ -103,10 +249,97 @@ def delete_employee(employee_id: int, db: Session = Depends(database.get_db)):
     return {"message": "Сотрудник удалён"}
 
 
+# ========== ЭНДПОИНТЫ ДЛЯ УПРАВЛЕНИЯ КАБИНЕТАМИ СОТРУДНИКОВ ==========
+
+@app.post("/api/employees/{employee_id}/account", response_model=schemas.UserPublic, status_code=status.HTTP_201_CREATED)
+def create_employee_account(
+    employee_id: int,
+    payload: schemas.CreateEmployeeAccountRequest,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Создать личный кабинет для сотрудника. Логин/пароль вводит админ."""
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+
+    if employee.user is not None:
+        raise HTTPException(status_code=409, detail="У сотрудника уже есть кабинет")
+
+    existing = db.query(models.User).filter(models.User.username == payload.username).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Этот логин уже занят")
+
+    user = models.User(
+        username=payload.username,
+        password_hash=auth.hash_password(payload.password),
+        role=models.UserRole.EMPLOYEE,
+        employee_id=employee_id,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return _user_to_public(user)
+
+
+@app.put("/api/employees/{employee_id}/account", response_model=schemas.UserPublic)
+def update_employee_account(
+    employee_id: int,
+    payload: schemas.UpdateEmployeeAccountRequest,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Изменить логин и/или пароль кабинета сотрудника."""
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    if employee.user is None:
+        raise HTTPException(status_code=404, detail="У сотрудника нет кабинета")
+
+    user = employee.user
+
+    if payload.username is not None and payload.username != user.username:
+        clash = db.query(models.User).filter(
+            models.User.username == payload.username,
+            models.User.id != user.id,
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail="Этот логин уже занят")
+        user.username = payload.username
+
+    if payload.password is not None:
+        user.password_hash = auth.hash_password(payload.password)
+
+    db.commit()
+    db.refresh(user)
+    return _user_to_public(user)
+
+
+@app.delete("/api/employees/{employee_id}/account")
+def delete_employee_account(
+    employee_id: int,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Удалить личный кабинет сотрудника (сотрудник остаётся, удаляется только аккаунт)."""
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    if employee.user is None:
+        raise HTTPException(status_code=404, detail="У сотрудника нет кабинета")
+
+    db.delete(employee.user)
+    db.commit()
+    return {"message": "Кабинет удалён"}
+
+
 # ========== ЭНДПОИНТЫ ДЛЯ ПОСЕЩАЕМОСТИ (ЖУРНАЛ) ==========
 
 @app.get("/api/attendance/today", response_model=List[schemas.AttendanceWithEmployee])
-def get_today_attendance(db: Session = Depends(database.get_db)):
+def get_today_attendance(
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Получить все записи посещаемости за сегодня."""
     today = crud.get_current_date_str()
     attendance_records = crud.get_attendance_by_date(db, today)
@@ -129,7 +362,8 @@ def get_today_attendance(db: Session = Depends(database.get_db)):
 def get_attendance_journal(
     start_date: str = None,
     end_date: str = None,
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
 ):
     """
     Получить журнал посещаемости за период.
@@ -169,7 +403,9 @@ def get_attendance_journal(
 
 
 @app.get("/api/attendance/latest", response_model=schemas.LatestAttendanceResponse)
-def get_latest_attendance():
+def get_latest_attendance(
+    _admin: models.User = Depends(auth.require_admin),
+):
     """
     Получить ID недавно считанной неизвестной карты из временной памяти.
     Это используется при регистрации новых сотрудников.
@@ -194,7 +430,8 @@ def get_latest_attendance():
 def update_attendance_record(
     attendance_id: int,
     attendance_update: schemas.AttendanceUpdate,
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
 ):
     """Обновить запись посещаемости (для ручного исправления)."""
     attendance = crud.update_attendance(
@@ -208,7 +445,11 @@ def update_attendance_record(
 
 
 @app.delete("/api/attendance/{attendance_id}")
-def delete_attendance_record(attendance_id: int, db: Session = Depends(database.get_db)):
+def delete_attendance_record(
+    attendance_id: int,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Удалить запись посещаемости."""
     success = crud.delete_attendance(db, attendance_id)
     if not success:
@@ -217,7 +458,11 @@ def delete_attendance_record(attendance_id: int, db: Session = Depends(database.
 
 
 @app.post("/api/attendance", response_model=schemas.Attendance, status_code=status.HTTP_201_CREATED)
-def create_attendance_record(attendance: schemas.AttendanceCreate, db: Session = Depends(database.get_db)):
+def create_attendance_record(
+    attendance: schemas.AttendanceCreate,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Создать запись посещаемости (для ручного ввода в журнале)."""
     return crud.create_attendance(db=db, attendance=attendance)
 
@@ -403,7 +648,8 @@ def bulk_scan_cards_for_attendance(
 def get_scan_logs(
     result: Optional[str] = None,  # 'success', 'warning', 'error' или None (всё)
     limit: int = 200,
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
 ):
     """
     Получить логи сканирований (для страницы Логи в админке).
@@ -422,7 +668,8 @@ def get_scan_logs(
 @app.delete("/api/scan-logs")
 def clear_scan_logs(
     older_than_days: Optional[int] = None,
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
 ):
     """
     Очистить логи. Если передан older_than_days — удаляет старше N дней. Иначе все.
@@ -441,39 +688,26 @@ def clear_scan_logs(
 
 # ========== ЭНДПОИНТЫ ДЛЯ РАСЧЁТА ЗАРПЛАТЫ ==========
 
-@app.get("/api/payroll/{employee_id}", response_model=schemas.PayrollCalculation)
-def calculate_payroll(
-    employee_id: int,
-    month: str = None,  # Формат: YYYY-MM
-    db: Session = Depends(database.get_db)
-):
+def _compute_payroll(db: Session, employee: models.Employee, month: str) -> dict:
+    """Чистая функция расчёта зарплаты — без HTTP/auth-логики.
+
+    Используется и админским эндпоинтом, и /api/me/payroll сотрудника.
+
+    ФОРМУЛА (почасовая):
+        Hourly Rate = Monthly Rate / (21 days × 9 hours)
+        Base Pay    = Hourly Rate × Total Hours Worked
+        Total Pay   = Base Pay + (Points × Point Value) + Bonuses − Advances − Fines
     """
-    Рассчитать зарплату сотрудника за месяц.
-
-    НОВАЯ ФОРМУЛА (почасовая):
-    1. Hourly Rate = Monthly Rate / (21 days × 9 hours)
-    2. Base Pay = Hourly Rate × Total Hours Worked
-    3. Total Pay = Base Pay + (Points × Point Value) + Bonuses - Advances - Fines
-    """
-    employee = crud.get_employee(db, employee_id)
-    if not employee:
-        raise HTTPException(status_code=404, detail="Сотрудник не найден")
-
-    if month is None:
-        month = crud.get_current_month_str()
-
     # ===== ЛОГИКА СНИМКОВ (SNAPSHOTS) =====
-    # Проверяем, есть ли снимок за этот месяц для сотрудника
     snapshot = db.query(models.SalarySnapshot).filter(
-        models.SalarySnapshot.employee_id == employee_id,
+        models.SalarySnapshot.employee_id == employee.id,
         models.SalarySnapshot.month == month
     ).first()
 
-    # Если снимка нет, создаём его, обрабатывая состояние гонки
     if not snapshot:
         try:
             snapshot = models.SalarySnapshot(
-                employee_id=employee_id,
+                employee_id=employee.id,
                 month=month,
                 salary_rate=employee.rate,
                 point_rate=employee.point_val
@@ -482,25 +716,21 @@ def calculate_payroll(
             db.commit()
             db.refresh(snapshot)
         except IntegrityError:
-            # Откатываем сессию после ошибки
             db.rollback()
-            # Другой процесс уже создал снимок, просто получаем его
             snapshot = db.query(models.SalarySnapshot).filter(
-                models.SalarySnapshot.employee_id == employee_id,
+                models.SalarySnapshot.employee_id == employee.id,
                 models.SalarySnapshot.month == month
             ).one()
 
-    # Получаем все транзакции за месяц
-    transactions = crud.get_transactions_by_employee_and_month(db, employee_id, month)
+    # Транзакции за месяц
+    transactions = crud.get_transactions_by_employee_and_month(db, employee.id, month)
 
-    # Инициализируем счётчики
     total_points = 0.0
     bonuses_total = 0.0
     advances_total = 0.0
     fines_total = 0.0
     details = []
 
-    # Обрабатываем транзакции
     for trans in transactions:
         detail = {
             "type": trans.type.value,
@@ -522,42 +752,33 @@ def calculate_payroll(
 
         details.append(detail)
 
-    # ПОЧАСОВОЙ РАСЧЁТ БАЗОВОЙ ЗАРПЛАТЫ
-    # Используем ставки из снимка (snapshot) для расчёта
     hourly_rate = snapshot.salary_rate / (STANDARD_WORKING_DAYS * STANDARD_HOURS_PER_DAY)
 
-    # Получаем записи посещаемости за месяц для подсчёта отработанных часов
     [year, month_num] = month.split('-')
     start_date = f"{year}-{month_num}-01"
-    last_day = calendar.monthrange(int(year), int(month_num))[1]  # Получаем последний день месяца
+    last_day = calendar.monthrange(int(year), int(month_num))[1]
     end_date = f"{year}-{month_num}-{last_day:02d}"
 
     attendance_records = crud.get_attendance_range(db, start_date, end_date)
 
-    # Подсчитываем общее количество отработанных часов для конкретного сотрудника
     total_hours_worked = 0.0
     for record in attendance_records:
-        if record.employee_id == employee_id and record.out_time:
+        if record.employee_id == employee.id and record.out_time:
             duration = crud.calculate_duration(record.in_time, record.out_time)
             if duration:
                 total_hours_worked += duration
 
-    # Базовая зарплата = часовая ставка × отработанные часы
     base_pay = hourly_rate * total_hours_worked
-
-    # Рассчитываем сдельную часть
     piecework_sum = total_points * snapshot.point_rate
-
-    # Итого к выплате
     to_pay = base_pay + piecework_sum + bonuses_total - advances_total - fines_total
 
     return {
         "employee_id": employee.id,
         "employee_name": employee.name,
         "month": month,
-        "base_rate": round(base_pay, 2),           # Теперь это расчётная базовая зарплата
-        "hourly_rate": round(hourly_rate, 2),      # Часовая ставка
-        "total_hours_worked": round(total_hours_worked, 2),  # Всего отработано часов
+        "base_rate": round(base_pay, 2),
+        "hourly_rate": round(hourly_rate, 2),
+        "total_hours_worked": round(total_hours_worked, 2),
         "total_points": round(total_points, 2),
         "piecework_sum": round(piecework_sum, 2),
         "bonuses_total": round(bonuses_total, 2),
@@ -565,13 +786,35 @@ def calculate_payroll(
         "fines_total": round(fines_total, 2),
         "to_pay": round(to_pay, 2),
         "details": details,
-        "salary_rate_used": snapshot.salary_rate,  # Ставка, использованная в расчёте
-        "point_rate_used": snapshot.point_rate     # Стоимость балла, использованная в расчёте
+        "salary_rate_used": snapshot.salary_rate,
+        "point_rate_used": snapshot.point_rate
     }
 
 
+@app.get("/api/payroll/{employee_id}", response_model=schemas.PayrollCalculation)
+def calculate_payroll(
+    employee_id: int,
+    month: str = None,  # Формат: YYYY-MM
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Рассчитать зарплату сотрудника за месяц (для админа)."""
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+
+    if month is None:
+        month = crud.get_current_month_str()
+
+    return _compute_payroll(db, employee, month)
+
+
 @app.post("/api/transactions", response_model=schemas.FinancialTransaction, status_code=status.HTTP_201_CREATED)
-def create_transaction(transaction: schemas.FinancialTransactionCreate, db: Session = Depends(database.get_db)):
+def create_transaction(
+    transaction: schemas.FinancialTransactionCreate,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """
     Создать финансовую транзакцию (премия, аванс, штраф, сдельная работа).
 
@@ -609,7 +852,11 @@ def create_transaction(transaction: schemas.FinancialTransactionCreate, db: Sess
 
 
 @app.delete("/api/transactions/{transaction_id}")
-def delete_transaction(transaction_id: int, db: Session = Depends(database.get_db)):
+def delete_transaction(
+    transaction_id: int,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """Удалить транзакцию."""
     success = crud.delete_transaction(db, transaction_id)
     if not success:
@@ -621,7 +868,8 @@ def delete_transaction(transaction_id: int, db: Session = Depends(database.get_d
 def get_employee_transactions(
     employee_id: int,
     month: str = None,  # Опциональный параметр для фильтрации по месяцу (YYYY-MM)
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
 ):
     """Получить все транзакции сотрудника.
     
@@ -659,7 +907,11 @@ class AdjustPointsRequest(BaseModel):
 
 
 @app.post("/api/payroll/adjust-hours")
-def adjust_hours(request: AdjustHoursRequest, db: Session = Depends(database.get_db)):
+def adjust_hours(
+    request: AdjustHoursRequest,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """
     Умная корректировка часов сотрудника за месяц.
 
@@ -783,7 +1035,11 @@ def adjust_hours(request: AdjustHoursRequest, db: Session = Depends(database.get
 
 
 @app.post("/api/payroll/adjust-points")
-def adjust_points(request: AdjustPointsRequest, db: Session = Depends(database.get_db)):
+def adjust_points(
+    request: AdjustPointsRequest,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
     """
     Корректировка очков сотрудника за месяц.
 
