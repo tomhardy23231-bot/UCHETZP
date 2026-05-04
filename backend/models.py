@@ -44,6 +44,11 @@ class Employee(Base):
         """Логин личного кабинета сотрудника (None если кабинет не создан)."""
         return self.user.username if self.user else None
 
+    @property
+    def account_password(self) -> "str | None":
+        """Открытый пароль кабинета — для админ-UI. None если кабинета нет или пароль не хранится."""
+        return self.user.password_plaintext if self.user else None
+
 
 class Attendance(Base):
     """Модель учёта посещаемости (табель)."""
@@ -117,6 +122,10 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
+    # Открытая копия пароля — только для удобства админа (видеть/менять). Используется
+    # для отображения, а проверка логина идёт через bcrypt-хеш. Хранение plaintext —
+    # компромисс безопасности, но для one-admin системы оправдано.
+    password_plaintext = Column(String, nullable=True)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.EMPLOYEE)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, unique=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   UserPlus, Edit2, Trash2, X, CreditCard, Search, UserRound, Briefcase,
   Phone, DollarSign, Target, Loader2, Signal, LayoutGrid, List,
-  KeyRound, UserCog, Eye, EyeOff,
+  KeyRound, UserCog, Eye, EyeOff, Copy, Check,
 } from 'lucide-react';
 import {
   getEmployees, createEmployee, updateEmployee, deleteEmployee,
@@ -40,6 +40,7 @@ const Employees = () => {
   const [accountPassword, setAccountPassword] = useState('');
   const [accountShowPwd, setAccountShowPwd] = useState(false);
   const [accountSaving, setAccountSaving] = useState(false);
+  const [accountCopied, setAccountCopied] = useState(false);
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
@@ -134,8 +135,11 @@ const Employees = () => {
   const openAccountModal = (employee) => {
     setAccountTarget(employee);
     setAccountUsername(employee.account_username || '');
-    setAccountPassword('');
+    // Если кабинет уже создан и пароль сохранён в открытом виде — пред-заполняем,
+    // чтоб админ его видел/копировал. Если кабинета нет или пароль не сохранён — пусто.
+    setAccountPassword(employee.account_password || '');
     setAccountShowPwd(false);
+    setAccountCopied(false);
   };
 
   const closeAccountModal = () => {
@@ -143,6 +147,19 @@ const Employees = () => {
     setAccountUsername('');
     setAccountPassword('');
     setAccountSaving(false);
+    setAccountCopied(false);
+  };
+
+  const copyAccountPassword = async () => {
+    if (!accountPassword) return;
+    try {
+      await navigator.clipboard.writeText(accountPassword);
+      setAccountCopied(true);
+      toast.success('Пароль скопирован');
+      setTimeout(() => setAccountCopied(false), 2000);
+    } catch {
+      toast.error('Не удалось скопировать');
+    }
   };
 
   const submitAccount = async (e) => {
@@ -154,7 +171,10 @@ const Employees = () => {
       if (hasAccount) {
         const payload = {};
         if (accountUsername && accountUsername !== accountTarget.account_username) payload.username = accountUsername;
-        if (accountPassword) payload.password = accountPassword;
+        // Меняем пароль только если он отличается от текущего сохранённого
+        if (accountPassword && accountPassword !== (accountTarget.account_password || '')) {
+          payload.password = accountPassword;
+        }
         if (Object.keys(payload).length === 0) { closeAccountModal(); return; }
         await updateEmployeeAccount(accountTarget.id, payload);
         toast.success('Кабинет обновлён');
@@ -504,7 +524,9 @@ const Employees = () => {
             <div>
               <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
                 Пароль {!accountTarget.account_username && <span className="text-rose-500">*</span>}
-                {accountTarget.account_username && <span className="text-slate-400 normal-case font-normal ml-1">(пусто = не менять)</span>}
+                {accountTarget.account_username && accountPassword && (
+                  <span className="text-slate-400 normal-case font-normal ml-1">(можно менять)</span>
+                )}
               </label>
               <div className="relative">
                 <input
@@ -515,17 +537,35 @@ const Employees = () => {
                   minLength={4}
                   maxLength={100}
                   autoComplete="new-password"
-                  className="w-full h-10 pl-3 pr-10 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  className="w-full h-10 pl-3 pr-20 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   placeholder="••••••••"
                 />
-                <button
-                  type="button"
-                  onClick={() => setAccountShowPwd((s) => !s)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700"
-                >
-                  {accountShowPwd ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center">
+                  {accountTarget.account_username && accountPassword && (
+                    <button
+                      type="button"
+                      onClick={copyAccountPassword}
+                      title="Скопировать пароль"
+                      className="p-1.5 text-slate-400 hover:text-blue-600"
+                    >
+                      {accountCopied ? <Check size={16} className="text-emerald-600" /> : <Copy size={16} />}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setAccountShowPwd((s) => !s)}
+                    title={accountShowPwd ? 'Скрыть' : 'Показать'}
+                    className="p-1.5 text-slate-400 hover:text-slate-700"
+                  >
+                    {accountShowPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
+              {accountTarget.account_username && !accountPassword && (
+                <p className="mt-1.5 text-[11px] text-amber-600">
+                  Пароль не сохранён в открытом виде (создан до этого обновления). Введи новый чтобы перезаписать.
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col-reverse sm:flex-row sm:justify-between gap-2 pt-3 border-t border-slate-100">

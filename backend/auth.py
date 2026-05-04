@@ -103,11 +103,16 @@ def seed_admin():
             models.User.username == admin_username
         ).first()
         if existing:
-            # Пользователь уже создан — не трогаем (чтобы не сбрасывать пароль на каждом старте)
+            # Уже есть. Если plaintext не сохранён (например после миграции) — заполним из ENV.
+            # Хеш не трогаем чтоб не сбрасывать пароль при ротации ENV-переменных.
+            if existing.password_plaintext is None:
+                existing.password_plaintext = admin_password
+                db.commit()
             return
         admin = models.User(
             username=admin_username,
             password_hash=hash_password(admin_password),
+            password_plaintext=admin_password,
             role=models.UserRole.ADMIN,
         )
         db.add(admin)

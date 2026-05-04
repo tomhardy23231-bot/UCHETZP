@@ -40,9 +40,11 @@ def _migrate_users_table_if_stale():
 
         # 1) Проверяем колонки users
         users_needs_drop = False
+        users_needs_alter = []
         users_row_count = 0
         if inspector.has_table("users"):
             columns = {c["name"] for c in inspector.get_columns("users")}
+            # Структурно обязательные — без них нужно дропать и пересоздавать
             required = {"id", "username", "password_hash", "role", "employee_id", "created_at"}
             missing = required - columns
             with database.engine.connect() as conn:
@@ -50,6 +52,9 @@ def _migrate_users_table_if_stale():
             if missing:
                 users_needs_drop = True
                 actions.append(f"users-cols-missing={sorted(missing)}")
+            # Опциональные колонки которые можно добавить через ALTER без потери данных
+            if "password_plaintext" not in columns:
+                users_needs_alter.append("password_plaintext VARCHAR")
 
         # 2) Проверяем значения ENUM userrole
         enum_needs_drop = False
@@ -67,18 +72,25 @@ def _migrate_users_table_if_stale():
         except Exception as e:
             actions.append(f"enum-check-error: {type(e).__name__}: {e}")
 
-        # 3) Если не надо чинить — выходим
+        # 3) Если структура в порядке — может быть только ALTER нужен
         if not users_needs_drop and not enum_needs_drop:
-            return "schema OK"
+            if not users_needs_alter:
+                return "schema OK"
+            with database.engine.connect() as conn:
+                for col_def in users_needs_alter:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_def}"))
+                    actions.append(f"altered-add-{col_def.split()[0]}")
+                conn.commit()
+            return "migration-applied: " + ", ".join(actions)
 
-        # 4) Если надо дропать users (или enum, что подразумевает дроп users) — проверка строк
+        # 4) Дропать users (или enum) — проверка чтобы не угробить данные
         if users_row_count > 1:
             return (
                 f"REFUSED auto-drop: users has {users_row_count} rows, "
                 f"manual migration needed. Actions wanted: {actions}"
             )
 
-        # 5) Дропаем
+        # 5) Дропаем (затем create_all создаст с новой схемой включая password_plaintext)
         with database.engine.connect() as conn:
             conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
             actions.append("dropped-users")
@@ -437,6 +449,7 @@ def create_employee_account(
     user = models.User(
         username=payload.username,
         password_hash=auth.hash_password(payload.password),
+        password_plaintext=payload.password,
         role=models.UserRole.EMPLOYEE,
         employee_id=employee_id,
     )
@@ -473,6 +486,7 @@ def update_employee_account(
 
     if payload.password is not None:
         user.password_hash = auth.hash_password(payload.password)
+        user.password_plaintext = payload.password
 
     db.commit()
     db.refresh(user)

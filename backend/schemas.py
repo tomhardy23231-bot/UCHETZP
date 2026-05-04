@@ -38,6 +38,7 @@ class Employee(EmployeeBase):
     """Схема сотрудника с ID."""
     id: int
     account_username: Optional[str] = None  # Логин личного кабинета (None если не создан)
+    account_password: Optional[str] = None  # Открытый пароль (только для админа)
 
     class Config:
         from_attributes = True
