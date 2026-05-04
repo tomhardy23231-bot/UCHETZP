@@ -21,6 +21,40 @@ import auth
 # Глобальная переменная для временного хранения ID неизвестной карты (для регистрации новых сотрудников)
 latest_scanned_card = None
 
+def _migrate_users_table_if_stale():
+    """Чиним старую таблицу users если её схема не сходится с текущей моделью.
+
+    create_all() не умеет добавлять колонки в существующие таблицы — только
+    создавать новые. Если в БД лежит таблица users с прошлых попыток auth,
+    но без поля employee_id (или другого нужного), то новый код будет падать.
+
+    Безопасность: дропаем ТОЛЬКО если таблица пустая. Если в ней есть строки —
+    отказываемся и оставляем разруливать вручную.
+    """
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(database.engine)
+        if not inspector.has_table("users"):
+            return "users-table missing — create_all will create"
+        columns = {c["name"] for c in inspector.get_columns("users")}
+        required = {"id", "username", "password_hash", "role", "employee_id", "created_at"}
+        missing = required - columns
+        if not missing:
+            return "users-schema OK"
+        with database.engine.connect() as conn:
+            row_count = conn.execute(text("SELECT COUNT(*) FROM users")).scalar() or 0
+            if row_count > 0:
+                return f"users-stale-but-has-data: missing={sorted(missing)}, rows={row_count} — REFUSED auto-drop"
+            conn.execute(text("DROP TABLE users CASCADE"))
+            conn.commit()
+            return f"users-stale-dropped (was empty, missing={sorted(missing)})"
+    except Exception as e:
+        return f"migration-error: {type(e).__name__}: {e}"
+
+
+# Сначала чиним старую таблицу users если осталась с прошлых попыток auth — потом create_all.
+_USERS_MIGRATION_RESULT = _migrate_users_table_if_stale()
+
 # Создаём таблицы в базе данных
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -30,8 +64,6 @@ models.Base.metadata.create_all(bind=database.engine)
 try:
     auth.seed_admin()
 except Exception as _e:
-    # Не валим импорт модуля если БД временно недоступна или ENV не задан —
-    # ошибка увидится при первой попытке логина или в /api/debug/auth-status.
     print(f"[seed_admin] {_e}")
 
 # Инициализируем FastAPI приложение
@@ -108,6 +140,7 @@ def auth_status():
     """Bullet-proof диагностика. Каждый чек обёрнут в try/except, никогда не возвращает 500."""
     result = {
         "imports_ok": True,
+        "users_migration_result": _USERS_MIGRATION_RESULT,
         "admin_username_env_set": False,
         "admin_username_env": None,
         "admin_password_env_set": False,
