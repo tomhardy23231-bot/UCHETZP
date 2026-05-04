@@ -1,6 +1,6 @@
 // pages/cabinet/CabinetHome.jsx — главная кабинета (mobile-first)
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Clock, Timer, Target, Wallet, UserRound, Briefcase, Phone, CreditCard, CheckCircle2, CircleDashed } from 'lucide-react';
+import { Clock, Timer, Target, Wallet, UserRound, Phone, CreditCard, CheckCircle2, CircleDashed } from 'lucide-react';
 import { getMyProfile, getMyAttendance, getMyPayroll } from '../../api/client';
 
 const formatTimeStr = (t) => t || '—';
@@ -139,7 +139,6 @@ const CabinetHome = () => {
         <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Профиль</p>
         <div className="space-y-2.5">
           <ProfileRow icon={<UserRound size={16} />} label="ФИО" value={profile.name} />
-          <ProfileRow icon={<Briefcase size={16} />} label="Должность" value={profile.position} />
           {profile.phone && <ProfileRow icon={<Phone size={16} />} label="Телефон" value={profile.phone} />}
           {profile.bank_acc && (
             <ProfileRow
