@@ -104,39 +104,90 @@ def get_me(current_user: models.User = Depends(auth.get_current_user)):
 
 
 @app.get("/api/auth/status")
-def auth_status(db: Session = Depends(database.get_db)):
-    """Диагностика: видна ли ENV-переменная ADMIN_USERNAME и есть ли такой юзер в БД.
-    Не возвращает паролей и не требует авторизации — это лампочка живой/мёртвый.
-    Если кто-то очень хочет — можно потом убрать.
-    """
-    admin_username_env = os.getenv("ADMIN_USERNAME")
-    admin_password_set = bool(os.getenv("ADMIN_PASSWORD"))
-    jwt_secret_set = bool(os.getenv("JWT_SECRET")) and os.getenv("JWT_SECRET") != "dev-only-change-me-in-production"
+def auth_status():
+    """Bullet-proof диагностика. Каждый чек обёрнут в try/except, никогда не возвращает 500."""
+    result = {
+        "imports_ok": True,
+        "admin_username_env_set": False,
+        "admin_username_env": None,
+        "admin_password_env_set": False,
+        "jwt_secret_env_set": False,
+        "db_connect_ok": None,
+        "users_table_exists": None,
+        "admin_user_in_db": None,
+        "seed_attempted_now": None,
+        "seed_error": None,
+        "errors": [],
+    }
 
-    admin_user_exists = False
-    if admin_username_env:
-        admin_user_exists = db.query(models.User).filter(
-            models.User.username == admin_username_env
-        ).first() is not None
+    # ENV-переменные
+    try:
+        admin_username = os.getenv("ADMIN_USERNAME")
+        admin_password = os.getenv("ADMIN_PASSWORD")
+        jwt_secret = os.getenv("JWT_SECRET")
+        result["admin_username_env_set"] = bool(admin_username)
+        result["admin_username_env"] = admin_username or None
+        result["admin_password_env_set"] = bool(admin_password)
+        result["jwt_secret_env_set"] = bool(jwt_secret) and jwt_secret != "dev-only-change-me-in-production"
+    except Exception as e:
+        result["errors"].append(f"env: {type(e).__name__}: {e}")
 
-    # Триггерим попытку сида ещё раз — на случай если cold-start её пропустил
+    # Подключение к БД + наличие таблицы users
+    db = None
+    try:
+        db = database.SessionLocal()
+        # пингуем коннект
+        db.execute(__import__('sqlalchemy').text("SELECT 1"))
+        result["db_connect_ok"] = True
+        # пробуем создать таблицы (идемпотентно) — если User таблицы не было, создастся
+        try:
+            models.Base.metadata.create_all(bind=database.engine)
+        except Exception as e:
+            result["errors"].append(f"create_all: {type(e).__name__}: {e}")
+        # проверяем что users существует
+        try:
+            count = db.query(models.User).count()
+            result["users_table_exists"] = True
+            result["users_total"] = count
+        except Exception as e:
+            result["users_table_exists"] = False
+            result["errors"].append(f"users_query: {type(e).__name__}: {e}")
+        # есть ли админ
+        try:
+            if admin_username:
+                exists = db.query(models.User).filter(models.User.username == admin_username).first() is not None
+                result["admin_user_in_db"] = exists
+        except Exception as e:
+            result["errors"].append(f"admin_lookup: {type(e).__name__}: {e}")
+    except Exception as e:
+        result["db_connect_ok"] = False
+        result["errors"].append(f"db_connect: {type(e).__name__}: {e}")
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    # Триггерим сид ещё раз
     try:
         auth.seed_admin()
-        seed_attempted = True
-        seed_error = None
+        result["seed_attempted_now"] = True
+        # перепроверяем после сида
+        try:
+            db2 = database.SessionLocal()
+            if admin_username:
+                result["admin_user_in_db_after_seed"] = (
+                    db2.query(models.User).filter(models.User.username == admin_username).first() is not None
+                )
+            db2.close()
+        except Exception:
+            pass
     except Exception as e:
-        seed_attempted = False
-        seed_error = str(e)
+        result["seed_attempted_now"] = False
+        result["seed_error"] = f"{type(e).__name__}: {e}"
 
-    return {
-        "admin_username_env_set": bool(admin_username_env),
-        "admin_username_env": admin_username_env or None,
-        "admin_password_env_set": admin_password_set,
-        "jwt_secret_env_set": jwt_secret_set,
-        "admin_user_in_db": admin_user_exists,
-        "seed_attempted_now": seed_attempted,
-        "seed_error": seed_error,
-    }
+    return result
 
 
 # ========== ЛИЧНЫЙ КАБИНЕТ СОТРУДНИКА (read-only) ==========
