@@ -22,32 +22,72 @@ import auth
 latest_scanned_card = None
 
 def _migrate_users_table_if_stale():
-    """Чиним старую таблицу users если её схема не сходится с текущей моделью.
+    """Чиним старую таблицу users + старый ENUM userrole от прошлых попыток auth.
 
-    create_all() не умеет добавлять колонки в существующие таблицы — только
-    создавать новые. Если в БД лежит таблица users с прошлых попыток auth,
-    но без поля employee_id (или другого нужного), то новый код будет падать.
+    Постгрес-ENUM-тип ('userrole') живёт отдельно от таблицы — DROP TABLE его
+    не уносит. От старого кода (commit 1a77c70 cleanup dead auth) мог остаться
+    enum со значениями {'admin'} или {'admin','user'}, без 'employee'. Тогда
+    seed_admin (admin) работает, а создание сотрудника-кабинета (employee)
+    падает с 500 на INSERT.
 
-    Безопасность: дропаем ТОЛЬКО если таблица пустая. Если в ней есть строки —
-    отказываемся и оставляем разруливать вручную.
+    Безопасность: автодроп users ТОЛЬКО если строк ≤ 1 (только админ, который
+    тут же пересеется из ENV). Если 2+ — отказываемся, чтоб не потерять данные.
     """
     try:
         from sqlalchemy import inspect, text
         inspector = inspect(database.engine)
-        if not inspector.has_table("users"):
-            return "users-table missing — create_all will create"
-        columns = {c["name"] for c in inspector.get_columns("users")}
-        required = {"id", "username", "password_hash", "role", "employee_id", "created_at"}
-        missing = required - columns
-        if not missing:
-            return "users-schema OK"
+        actions = []
+
+        # 1) Проверяем колонки users
+        users_needs_drop = False
+        users_row_count = 0
+        if inspector.has_table("users"):
+            columns = {c["name"] for c in inspector.get_columns("users")}
+            required = {"id", "username", "password_hash", "role", "employee_id", "created_at"}
+            missing = required - columns
+            with database.engine.connect() as conn:
+                users_row_count = conn.execute(text("SELECT COUNT(*) FROM users")).scalar() or 0
+            if missing:
+                users_needs_drop = True
+                actions.append(f"users-cols-missing={sorted(missing)}")
+
+        # 2) Проверяем значения ENUM userrole
+        enum_needs_drop = False
+        try:
+            with database.engine.connect() as conn:
+                rows = conn.execute(text(
+                    "SELECT enumlabel FROM pg_enum "
+                    "JOIN pg_type ON pg_enum.enumtypid = pg_type.oid "
+                    "WHERE pg_type.typname = 'userrole'"
+                )).fetchall()
+                existing_values = {r[0].lower() for r in rows}
+                if existing_values and existing_values != {"admin", "employee"}:
+                    enum_needs_drop = True
+                    actions.append(f"userrole-enum-stale={sorted(existing_values)}")
+        except Exception as e:
+            actions.append(f"enum-check-error: {type(e).__name__}: {e}")
+
+        # 3) Если не надо чинить — выходим
+        if not users_needs_drop and not enum_needs_drop:
+            return "schema OK"
+
+        # 4) Если надо дропать users (или enum, что подразумевает дроп users) — проверка строк
+        if users_row_count > 1:
+            return (
+                f"REFUSED auto-drop: users has {users_row_count} rows, "
+                f"manual migration needed. Actions wanted: {actions}"
+            )
+
+        # 5) Дропаем
         with database.engine.connect() as conn:
-            row_count = conn.execute(text("SELECT COUNT(*) FROM users")).scalar() or 0
-            if row_count > 0:
-                return f"users-stale-but-has-data: missing={sorted(missing)}, rows={row_count} — REFUSED auto-drop"
-            conn.execute(text("DROP TABLE users CASCADE"))
+            conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
+            actions.append("dropped-users")
+            if enum_needs_drop:
+                conn.execute(text("DROP TYPE IF EXISTS userrole CASCADE"))
+                actions.append("dropped-userrole-enum")
             conn.commit()
-            return f"users-stale-dropped (was empty, missing={sorted(missing)})"
+
+        return "migration-applied: " + ", ".join(actions)
     except Exception as e:
         return f"migration-error: {type(e).__name__}: {e}"
 
