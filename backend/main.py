@@ -24,18 +24,22 @@ latest_scanned_card = None
 # Создаём таблицы в базе данных
 models.Base.metadata.create_all(bind=database.engine)
 
+# Создаём админ-пользователя из ENV-переменных (если ADMIN_USERNAME/ADMIN_PASSWORD заданы).
+# На Vercel serverless startup-хуки не всегда срабатывают, поэтому сидим на module-level —
+# выполнится при каждом cold-start. Идемпотентно: если админ уже есть, тихо выходит.
+try:
+    auth.seed_admin()
+except Exception as _e:
+    # Не валим импорт модуля если БД временно недоступна или ENV не задан —
+    # ошибка увидится при первой попытке логина или в /api/debug/auth-status.
+    print(f"[seed_admin] {_e}")
+
 # Инициализируем FastAPI приложение
 app = FastAPI(
     title="Система учёта ЗП",
     description="Система учёта посещаемости и расчёта заработной платы",
     version="1.0.0"
 )
-
-
-@app.on_event("startup")
-def on_startup():
-    """Создаём админ-пользователя из ENV-переменных при первом запуске."""
-    auth.seed_admin()
 
 # Настройка CORS для разрешения запросов с фронтенда
 app.add_middleware(
@@ -97,6 +101,42 @@ def login(payload: schemas.LoginRequest, db: Session = Depends(database.get_db))
 def get_me(current_user: models.User = Depends(auth.get_current_user)):
     """Текущий пользователь (по JWT-токену из Authorization-заголовка)."""
     return _user_to_public(current_user)
+
+
+@app.get("/api/auth/status")
+def auth_status(db: Session = Depends(database.get_db)):
+    """Диагностика: видна ли ENV-переменная ADMIN_USERNAME и есть ли такой юзер в БД.
+    Не возвращает паролей и не требует авторизации — это лампочка живой/мёртвый.
+    Если кто-то очень хочет — можно потом убрать.
+    """
+    admin_username_env = os.getenv("ADMIN_USERNAME")
+    admin_password_set = bool(os.getenv("ADMIN_PASSWORD"))
+    jwt_secret_set = bool(os.getenv("JWT_SECRET")) and os.getenv("JWT_SECRET") != "dev-only-change-me-in-production"
+
+    admin_user_exists = False
+    if admin_username_env:
+        admin_user_exists = db.query(models.User).filter(
+            models.User.username == admin_username_env
+        ).first() is not None
+
+    # Триггерим попытку сида ещё раз — на случай если cold-start её пропустил
+    try:
+        auth.seed_admin()
+        seed_attempted = True
+        seed_error = None
+    except Exception as e:
+        seed_attempted = False
+        seed_error = str(e)
+
+    return {
+        "admin_username_env_set": bool(admin_username_env),
+        "admin_username_env": admin_username_env or None,
+        "admin_password_env_set": admin_password_set,
+        "jwt_secret_env_set": jwt_secret_set,
+        "admin_user_in_db": admin_user_exists,
+        "seed_attempted_now": seed_attempted,
+        "seed_error": seed_error,
+    }
 
 
 # ========== ЛИЧНЫЙ КАБИНЕТ СОТРУДНИКА (read-only) ==========
