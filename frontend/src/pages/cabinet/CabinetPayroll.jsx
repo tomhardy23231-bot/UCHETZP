@@ -5,6 +5,7 @@ import {
   TrendingDown, AlertTriangle, Calculator, ReceiptText
 } from 'lucide-react';
 import { getMyPayroll, getMyTransactions } from '../../api/client';
+import { useCountUp } from '../../hooks/useCountUp';
 
 const formatMonth = (m) => {
   const [year, month] = m.split('-').map(Number);
@@ -52,6 +53,14 @@ const CabinetPayroll = () => {
     setMonth(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`);
   };
 
+  // Анимированные счётчики (фоллбэки на 0 пока payroll не загрузился)
+  const animToPay = useCountUp(payroll?.to_pay ?? 0);
+  const animBase = useCountUp(payroll?.base_rate ?? 0);
+  const animPiecework = useCountUp(payroll?.piecework_sum ?? 0);
+  const animBonus = useCountUp(payroll?.bonuses_total ?? 0);
+  const animAdvance = useCountUp(payroll?.advances_total ?? 0);
+  const animFines = useCountUp(payroll?.fines_total ?? 0);
+
   return (
     <div className="space-y-4">
       {/* Месяц-навигация */}
@@ -77,25 +86,26 @@ const CabinetPayroll = () => {
       </div>
 
       {loading && !payroll ? (
-        <div className="flex flex-col items-center justify-center pt-16 text-slate-400">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500 mb-4"></div>
-          <p className="text-sm">Считаем...</p>
-        </div>
+        <PayrollSkeleton />
       ) : payroll ? (
         <>
           {/* Большая цифра — к выплате */}
-          <div className="rounded-3xl p-6 text-white shadow-lg bg-gradient-to-br from-emerald-500 to-teal-600">
-            <div className="flex items-center gap-2 opacity-90">
-              <Wallet size={18} />
-              <p className="text-[11px] font-bold uppercase tracking-widest">К выплате</p>
+          <div className="relative overflow-hidden rounded-3xl p-6 text-white shadow-xl bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-700">
+            <div className="absolute -top-12 -right-12 w-40 h-40 rounded-full bg-white/10 blur-2xl" />
+            <div className="absolute -bottom-16 -left-12 w-48 h-48 rounded-full bg-white/5 blur-3xl" />
+            <div className="relative">
+              <div className="flex items-center gap-2 opacity-90">
+                <Wallet size={18} />
+                <p className="text-[11px] font-bold uppercase tracking-widest">К выплате</p>
+              </div>
+              <p className="text-5xl font-black tracking-tighter mt-2 tabular-nums">
+                {formatMoney(animToPay)}
+                <span className="text-2xl font-bold opacity-70 ml-1">₴</span>
+              </p>
+              <p className="text-xs font-medium opacity-80 mt-2">
+                Предварительный расчёт. Финальную сумму подтверждает руководитель.
+              </p>
             </div>
-            <p className="text-5xl font-black tracking-tighter mt-2">
-              {formatMoney(payroll.to_pay)}
-              <span className="text-2xl font-bold opacity-70 ml-1">₴</span>
-            </p>
-            <p className="text-xs font-medium opacity-80 mt-2">
-              Предварительный расчёт. Финальную сумму подтверждает руководитель.
-            </p>
           </div>
 
           {/* Часы и базовая ставка */}
@@ -111,7 +121,7 @@ const CabinetPayroll = () => {
             </div>
             <div className="flex items-center justify-between bg-blue-50 rounded-xl px-4 py-3">
               <span className="text-sm font-bold text-blue-700">Заработано по часам</span>
-              <span className="text-lg font-black text-blue-700">{formatMoney(payroll.base_rate)} ₴</span>
+              <span className="text-lg font-black text-blue-700 tabular-nums">{formatMoney(animBase)} ₴</span>
             </div>
           </div>
 
@@ -128,7 +138,7 @@ const CabinetPayroll = () => {
                     {payroll.total_points.toFixed(1)} × {payroll.point_rate_used.toFixed(2)} ₴
                   </p>
                 </div>
-                <span className="text-lg font-black text-indigo-700">{formatMoney(payroll.piecework_sum)} ₴</span>
+                <span className="text-lg font-black text-indigo-700 tabular-nums">{formatMoney(animPiecework)} ₴</span>
               </div>
             </div>
           )}
@@ -138,19 +148,19 @@ const CabinetPayroll = () => {
             <SummaryCard
               icon={<TrendingUp size={16} />}
               label="Премии"
-              value={`+${formatMoney(payroll.bonuses_total)}`}
+              value={`+${formatMoney(animBonus)}`}
               color="emerald"
             />
             <SummaryCard
               icon={<Wallet size={16} />}
               label="Авансы"
-              value={`−${formatMoney(payroll.advances_total)}`}
+              value={`−${formatMoney(animAdvance)}`}
               color="amber"
             />
             <SummaryCard
               icon={<AlertTriangle size={16} />}
               label="Штрафы"
-              value={`−${formatMoney(payroll.fines_total)}`}
+              value={`−${formatMoney(animFines)}`}
               color="rose"
             />
           </div>
@@ -169,7 +179,7 @@ const CabinetPayroll = () => {
               {payroll.fines_total > 0 && <BreakdownRow label="Штрафы" value={`−${formatMoney(payroll.fines_total)}`} negative />}
               <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
                 <span className="font-black text-slate-800">Итого</span>
-                <span className="font-black text-slate-900 text-lg">{formatMoney(payroll.to_pay)} ₴</span>
+                <span className="font-black text-slate-900 text-lg tabular-nums">{formatMoney(payroll.to_pay)} ₴</span>
               </div>
             </div>
           </div>
@@ -264,6 +274,38 @@ const BreakdownRow = ({ label, value, positive, negative }) => (
       {value}
     </span>
   </div>
+);
+
+// Skeleton для первого расчёта зарплаты в месяце
+const PayrollSkeleton = () => (
+  <>
+    {/* Hero "К выплате" */}
+    <div className="rounded-3xl p-6 shadow-xl bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-700">
+      <div className="space-y-3">
+        <div className="skeleton-dark h-3 w-24" />
+        <div className="skeleton-dark h-12 w-2/3" />
+        <div className="skeleton-dark h-3 w-3/4" />
+      </div>
+    </div>
+    {/* Базовая часть */}
+    <div className="bg-white rounded-2xl p-4 shadow-soft border border-slate-100 space-y-3">
+      <div className="skeleton h-3 w-28" />
+      <div className="grid grid-cols-3 gap-2">
+        <div className="skeleton h-12 rounded-xl" />
+        <div className="skeleton h-12 rounded-xl" />
+        <div className="skeleton h-12 rounded-xl" />
+      </div>
+      <div className="skeleton h-12 rounded-xl" />
+    </div>
+    {/* 3 plate-карточки */}
+    <div className="grid grid-cols-3 gap-3">
+      <div className="skeleton h-20 rounded-2xl" />
+      <div className="skeleton h-20 rounded-2xl" />
+      <div className="skeleton h-20 rounded-2xl" />
+    </div>
+    {/* Расчёт */}
+    <div className="skeleton h-40 rounded-2xl" />
+  </>
 );
 
 export default CabinetPayroll;

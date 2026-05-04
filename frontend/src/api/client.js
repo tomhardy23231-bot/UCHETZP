@@ -1,8 +1,11 @@
 // api/client.js - Axios клиент для API запросов
 import axios from 'axios';
 
-// Базовый URL API (используем относительный путь в продакшене и localhost в разработке)
-const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
+// Базовый URL API:
+// - VITE_API_URL — явное переопределение (например, чтобы локальный dev смотрел в прод-API)
+// - В dev-режиме иначе → localhost:8000 (если бэк запущен локально)
+// - В проде → пустая строка → относительные пути (тот же домен Vercel)
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 // Создаём инстанс axios с базовыми настройками
 const api = axios.create({

@@ -1,7 +1,8 @@
 // pages/cabinet/CabinetCalendar.jsx — календарь посещаемости (mobile-first)
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Clock, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, X, BarChart3, TrendingUp, Sparkles } from 'lucide-react';
 import { getMyAttendance } from '../../api/client';
+import { useCountUp } from '../../hooks/useCountUp';
 
 const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -78,6 +79,21 @@ const CabinetCalendar = () => {
     [records]
   );
 
+  // Метрики для барчарта: только дни с закрытой сменой (есть total_hours)
+  const closedShifts = useMemo(
+    () => records.filter((r) => r.total_hours != null && r.total_hours > 0),
+    [records]
+  );
+
+  const stats = useMemo(() => {
+    if (closedShifts.length === 0) return { avg: 0, max: 0, maxDate: null };
+    const values = closedShifts.map((r) => r.total_hours);
+    const max = Math.max(...values);
+    const maxRecord = closedShifts.find((r) => r.total_hours === max);
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    return { avg, max, maxDate: maxRecord?.date };
+  }, [closedShifts]);
+
   const today = new Date().toISOString().slice(0, 10);
 
   const changeMonth = (delta) => {
@@ -110,6 +126,17 @@ const CabinetCalendar = () => {
           <ChevronRight size={22} />
         </button>
       </div>
+
+      {/* График часов по дням */}
+      <HoursBarChart
+        grid={grid}
+        today={today}
+        selectedDate={selectedDate}
+        onSelectDate={(d) => setSelectedDate(d === selectedDate ? null : d)}
+        stats={stats}
+        totalHours={totalHours}
+        loading={loading}
+      />
 
       {/* Сетка календаря */}
       <div className="bg-white rounded-2xl p-3 shadow-soft border border-slate-100">
@@ -235,6 +262,142 @@ const DayStat = ({ label, value, color }) => (
   <div className={`rounded-xl p-2.5 ${COLOR_TXT[color]}`}>
     <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">{label}</p>
     <p className="text-base font-black mt-0.5">{value}</p>
+  </div>
+);
+
+// ============ Барчарт часов по дням ============
+
+const HoursBarChart = ({ grid, today, selectedDate, onSelectDate, stats, totalHours, loading }) => {
+  const days = grid.filter((c) => c.kind === 'day');
+  // База для нормализации — макс из реальных + 8ч floor (чтоб 9-часовые смены не выглядели "max")
+  const scaleMax = Math.max(8, stats.max || 0);
+
+  // Анимированные значения в шапке
+  const animAvg = useCountUp(stats.avg || 0);
+  const animMax = useCountUp(stats.max || 0);
+  const animTotal = useCountUp(totalHours || 0);
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-soft border border-slate-100">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <BarChart3 size={16} className="text-blue-500" />
+          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Часы по дням</p>
+        </div>
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+          макс {scaleMax.toFixed(0)}ч
+        </span>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-2 mb-4">
+        <BarStat
+          icon={<Sparkles size={12} />}
+          label="Среднее"
+          value={stats.avg ? animAvg.toFixed(1) : '—'}
+          unit="ч/день"
+          tone="blue"
+        />
+        <BarStat
+          icon={<TrendingUp size={12} />}
+          label="Максимум"
+          value={stats.max ? animMax.toFixed(1) : '—'}
+          unit={stats.maxDate ? new Date(stats.maxDate).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : ''}
+          tone="emerald"
+        />
+        <BarStat
+          icon={<Clock size={12} />}
+          label="Всего"
+          value={animTotal.toFixed(1)}
+          unit="часов"
+          tone="indigo"
+        />
+      </div>
+
+      {/* Bars */}
+      {loading && days.length === 0 ? (
+        <div className="h-32 flex items-end gap-[3px] px-1">
+          {Array.from({ length: 30 }).map((_, i) => (
+            <div key={i} className="flex-1 skeleton" style={{ height: `${30 + (i * 7) % 60}%` }} />
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="flex items-end gap-[3px] h-32 px-1">
+            {days.map((day) => {
+              const hrs = day.record?.total_hours || 0;
+              const isOpen = day.record?.in_time && !day.record?.out_time;
+              // Открытая смена показывается как полупрозрачный 50%-бар (закроется потом)
+              const visualHrs = isOpen ? Math.max(2, scaleMax * 0.4) : hrs;
+              const heightPct = (visualHrs / scaleMax) * 100;
+              const isToday = day.date === today;
+              const isSelected = day.date === selectedDate;
+              const hasShift = !!day.record;
+
+              const barClass = isSelected
+                ? 'bg-gradient-to-t from-blue-700 to-blue-500'
+                : isOpen
+                ? 'bg-gradient-to-t from-amber-500 to-amber-300 opacity-70'
+                : hasShift
+                ? 'bg-gradient-to-t from-emerald-500 to-emerald-300 group-hover:from-emerald-600 group-hover:to-emerald-400'
+                : 'bg-slate-200 group-hover:bg-slate-300';
+
+              return (
+                <button
+                  key={day.key}
+                  onClick={() => onSelectDate(day.date)}
+                  className="group relative flex-1 flex flex-col justify-end h-full min-w-0 active:scale-95 transition-soft"
+                  title={`${day.dayNum}: ${hasShift ? hrs.toFixed(1) + 'ч' : 'нет данных'}`}
+                >
+                  {/* Сам бар */}
+                  <div
+                    className={`w-full rounded-t transition-all duration-300 ${barClass} ${
+                      isToday && !isSelected ? 'ring-1 ring-blue-400 ring-offset-1' : ''
+                    }`}
+                    style={{ height: `${Math.max(heightPct, hasShift || isOpen ? 4 : 6)}%` }}
+                  />
+                  {/* Метка дня снизу — каждый 5-й + 1-й + последний */}
+                  {(day.dayNum === 1 || day.dayNum % 5 === 0 || day.dayNum === days.length) && (
+                    <span className={`absolute -bottom-4 left-1/2 -translate-x-1/2 text-[9px] font-bold ${
+                      isSelected || isToday ? 'text-blue-600' : 'text-slate-400'
+                    }`}>
+                      {day.dayNum}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {/* Spacer for day labels */}
+          <div className="h-5" />
+        </>
+      )}
+
+      {/* Hint */}
+      <p className="text-[10px] text-slate-400 text-center pt-1 border-t border-slate-100 mt-1">
+        Тапни столбик — увидишь детали смены
+      </p>
+    </div>
+  );
+};
+
+const BAR_STAT_TONES = {
+  blue: 'bg-blue-50 text-blue-700 border-blue-100',
+  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  indigo: 'bg-indigo-50 text-indigo-700 border-indigo-100',
+};
+
+const BarStat = ({ icon, label, value, unit, tone }) => (
+  <div className={`rounded-xl px-2.5 py-2 border ${BAR_STAT_TONES[tone]}`}>
+    <div className="flex items-center gap-1 opacity-70 mb-0.5">
+      {icon}
+      <span className="text-[9px] font-bold uppercase tracking-widest">{label}</span>
+    </div>
+    <p className="text-base font-black leading-none">
+      {value}
+      {unit && <span className="text-[10px] font-medium opacity-70 ml-1">{unit}</span>}
+    </p>
   </div>
 );
 

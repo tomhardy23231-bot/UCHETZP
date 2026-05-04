@@ -1,1 +1,8 @@
 repomix-output.xml
+
+# Vite local-only env overrides
+.env.local
+.env.*.local
+
+# Node
+node_modules

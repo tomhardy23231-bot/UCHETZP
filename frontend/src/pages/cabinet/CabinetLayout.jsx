@@ -1,6 +1,6 @@
 // pages/cabinet/CabinetLayout.jsx — mobile-first layout кабинета сотрудника
-import React from 'react';
-import { Routes, Route, Navigate, NavLink } from 'react-router-dom';
+import React, { useRef } from 'react';
+import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom';
 import { Home, CalendarDays, Wallet, LogOut } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import CabinetHome from './CabinetHome';
@@ -13,8 +13,24 @@ const TABS = [
   { to: '/cabinet/payroll', label: 'Зарплата', icon: Wallet, end: false },
 ];
 
+// Порядок табов для определения направления свайпа
+const TAB_ORDER = ['/cabinet', '/cabinet/calendar', '/cabinet/payroll'];
+const tabIndex = (path) => {
+  // На /cabinet/anything-else — считаем как 0 (главная)
+  const idx = TAB_ORDER.indexOf(path);
+  return idx >= 0 ? idx : 0;
+};
+
 const CabinetLayout = () => {
   const { user, logout } = useAuth();
+  const location = useLocation();
+
+  // Определяем направление перехода: вправо если идём вперёд по табам, влево — назад
+  const prevIdxRef = useRef(tabIndex(location.pathname));
+  const currentIdx = tabIndex(location.pathname);
+  const direction = currentIdx >= prevIdxRef.current ? 'right' : 'left';
+  // Обновляем prev для следующего рендера
+  prevIdxRef.current = currentIdx;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -41,14 +57,19 @@ const CabinetLayout = () => {
         </div>
       </header>
 
-      {/* Контент — отступ снизу под нижний таббар */}
+      {/* Контент — отступ снизу под нижний таббар. Key=pathname → анимация при смене таба. */}
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 pt-4 pb-24">
-        <Routes>
-          <Route path="/" element={<CabinetHome />} />
-          <Route path="/calendar" element={<CabinetCalendar />} />
-          <Route path="/payroll" element={<CabinetPayroll />} />
-          <Route path="*" element={<Navigate to="/cabinet" replace />} />
-        </Routes>
+        <div
+          key={location.pathname}
+          className={direction === 'right' ? 'cabinet-slide-right' : 'cabinet-slide-left'}
+        >
+          <Routes location={location}>
+            <Route path="/" element={<CabinetHome />} />
+            <Route path="/calendar" element={<CabinetCalendar />} />
+            <Route path="/payroll" element={<CabinetPayroll />} />
+            <Route path="*" element={<Navigate to="/cabinet" replace />} />
+          </Routes>
+        </div>
       </main>
 
       {/* Bottom nav — основной способ навигации на телефоне */}
