@@ -214,7 +214,7 @@ const CabinetPayroll = () => {
                         </p>
                         {t.comment && <p className="text-xs text-slate-500 truncate">{t.comment}</p>}
                         <p className="text-[10px] text-slate-400 font-medium">
-                          {new Date(t.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                          {new Date(t.created_at || t.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
                         </p>
                       </div>
                       <span className={`font-black text-sm tabular-nums ${

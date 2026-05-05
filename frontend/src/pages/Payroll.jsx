@@ -326,6 +326,17 @@ const Payroll = () => {
     }
   };
 
+  // Фактическая дата создания (created_at) — момент, когда админ нажал «Добавить».
+  // Поле trans.date теперь несёт месяц-бакет (всегда 1-е число) и для UI
+  // не показательно. Если по какой-то причине created_at нет — фоллбек на date.
+  const formatTransactionDate = (trans) => {
+    const raw = trans.created_at || trans.date;
+    if (!raw) return '';
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return raw;
+    return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  };
+
   // --- MODALS ---
   // Универсальная модалка транзакций (Премия / Аванс / Штраф / Сдельная) — один компонент
   const transactionModal = (
@@ -393,7 +404,7 @@ const Payroll = () => {
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-slate-900">{getTransactionLabel(trans.type)}</div>
                     <div className="text-xs text-slate-500 truncate max-w-[260px]">{trans.comment || '—'}</div>
-                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">{trans.date}</div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">{formatTransactionDate(trans)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -719,7 +730,7 @@ const Payroll = () => {
                                   <div className="text-[11px] text-slate-500 truncate">{trans.comment}</div>
                                 )}
                                 <div className="flex items-center justify-between mt-0.5">
-                                  <span className="text-[10px] text-slate-400 font-mono">{trans.date}</span>
+                                  <span className="text-[10px] text-slate-400 font-mono">{formatTransactionDate(trans)}</span>
                                   <button onClick={() => handleDeleteTransaction(trans.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-colors">
                                     <Trash2 size={11} />
                                   </button>

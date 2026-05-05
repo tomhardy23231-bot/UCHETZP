@@ -49,7 +49,7 @@ const TransactionModal = ({
   open,
   onClose,
   type,            // 'BONUS' | 'ADVANCE' | 'FINE' | 'POINTS'
-  defaultDate,     // YYYY-MM-DD
+  defaultDate,     // YYYY-MM-DD — 1-е число просматриваемого месяца (бакет)
   pointValue,      // только для POINTS — для подсветки расчёта
   onSubmit,        // ({ amount, points_count, comment, date }) => Promise
 }) => {
@@ -57,22 +57,24 @@ const TransactionModal = ({
   const [amount, setAmount] = useState('');
   const [points, setPoints] = useState('');
   const [comment, setComment] = useState('');
-  const [date, setDate] = useState(defaultDate || '');
 
-  // Границы месяца, в карточке которого мы сейчас находимся.
-  // Бэкенд группирует транзакции по полю date, поэтому пикер обязан жить
-  // внутри текущего месяца — иначе запись «уезжает» в другой бакет и кажется,
-  // что она пропала.
-  const monthBounds = React.useMemo(() => {
-    if (!defaultDate) return null;
+  // Дата на бэкенде хранит «месяц-бакет» (по ней группируются транзакции
+  // через startswith('YYYY-MM')). Поэтому всегда отправляем 1-е число
+  // выбранного сверху месяца. Фактический момент создания записи фиксируется
+  // в created_at на сервере и используется в UI как «реальная дата».
+  const bucketDate = defaultDate; // YYYY-MM-01
+
+  const periodLabel = React.useMemo(() => {
+    if (!defaultDate) return '';
     const [y, m] = defaultDate.split('-').map(Number);
-    if (!y || !m) return null;
-    const lastDay = new Date(y, m, 0).getDate();
-    const min = `${defaultDate.slice(0, 7)}-01`;
-    const max = `${defaultDate.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`;
-    const label = new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-    return { min, max, label };
+    if (!y || !m) return '';
+    return new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
   }, [defaultDate]);
+
+  const todayLabel = React.useMemo(
+    () => new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    [open] // пересчитываем при каждом открытии модалки
+  );
 
   // Сбрасываем значения при открытии
   useEffect(() => {
@@ -80,9 +82,8 @@ const TransactionModal = ({
       setAmount('');
       setPoints('');
       setComment('');
-      setDate(defaultDate || '');
     }
-  }, [open, defaultDate]);
+  }, [open]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -91,7 +92,7 @@ const TransactionModal = ({
       amount: isPoints ? 0 : parseFloat(amount) || 0,
       points_count: isPoints ? parseFloat(points) || 0 : null,
       comment: comment || null,
-      date,
+      date: bucketDate,
     });
   };
 
@@ -148,23 +149,14 @@ const TransactionModal = ({
           />
         </div>
 
-        <div>
-          <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
-            Дата *
-          </label>
-          <input
-            type="date" required
-            value={date}
-            min={monthBounds?.min}
-            max={monthBounds?.max}
-            onChange={(e) => setDate(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium"
-          />
-          {monthBounds && (
-            <p className="mt-1.5 text-[11px] text-slate-500">
-              Запись попадёт в <span className="font-medium text-slate-700 capitalize">{monthBounds.label}</span>
-            </p>
-          )}
+        <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-md text-xs text-slate-600 flex items-center justify-between gap-3">
+          <span>
+            Запись от <span className="font-semibold text-slate-900">{todayLabel}</span>
+          </span>
+          <span className="text-slate-400">→</span>
+          <span className="text-right">
+            попадёт в <span className="font-semibold text-slate-900 capitalize">{periodLabel}</span>
+          </span>
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
