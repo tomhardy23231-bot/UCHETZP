@@ -100,6 +100,23 @@ class SalarySnapshot(Base):
     )
 
 
+class MonthClosure(Base):
+    """Закрытый (зафиксированный) расчётный месяц.
+
+    Когда админ закрывает месяц — добавляется одна строка с месяцем "YYYY-MM".
+    После этого транзакции этого месяца и корректировки часов/очков блокируются
+    на бэкенде, чтобы цифры за уже выплаченную зарплату нельзя было поменять
+    задним числом. Снятие закрытия = удаление строки.
+    """
+    __tablename__ = "month_closures"
+
+    id = Column(Integer, primary_key=True, index=True)
+    month = Column(String, nullable=False, unique=True, index=True)  # "YYYY-MM"
+    closed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    closed_by_user_id = Column(Integer, nullable=True)  # админ, который нажал «Закрыть»
+    closed_by_username = Column(String, nullable=True)  # снимок логина (на случай удаления юзера)
+
+
 class AttendanceLog(Base):
     """Модель логов сканирований (успехи и ошибки) - для просмотра администратором."""
     __tablename__ = "attendance_logs"

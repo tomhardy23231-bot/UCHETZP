@@ -1086,7 +1086,8 @@ def _compute_payroll(db: Session, employee: models.Employee, month: str) -> dict
         "to_pay": round(to_pay, 2),
         "details": details,
         "salary_rate_used": snapshot.salary_rate,
-        "point_rate_used": snapshot.point_rate
+        "point_rate_used": snapshot.point_rate,
+        "is_closed": crud.is_month_closed(db, month),
     }
 
 
@@ -1125,6 +1126,8 @@ def create_transaction(
     if not employee:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
 
+    _ensure_month_open(db, crud.month_from_date_str(transaction.date))
+
     # Если это транзакция типа POINTS, вычисляем amount автоматически
     if transaction.type == models.TransactionType.POINTS:
         if transaction.points_count is None or transaction.points_count <= 0:
@@ -1157,6 +1160,13 @@ def delete_transaction(
     _admin: models.User = Depends(auth.require_admin),
 ):
     """Удалить транзакцию."""
+    trans = db.query(models.FinancialTransaction).filter(
+        models.FinancialTransaction.id == transaction_id
+    ).first()
+    if not trans:
+        raise HTTPException(status_code=404, detail="Транзакция не найдена")
+    _ensure_month_open(db, crud.month_from_date_str(trans.date))
+
     success = crud.delete_transaction(db, transaction_id)
     if not success:
         raise HTTPException(status_code=404, detail="Транзакция не найдена")
@@ -1222,6 +1232,8 @@ def adjust_hours(
     employee = crud.get_employee(db, request.employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
+
+    _ensure_month_open(db, request.month)
 
     # Получаем границы месяца
     [year, month_num] = request.month.split('-')
@@ -1348,6 +1360,8 @@ def adjust_points(
     if not employee:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
 
+    _ensure_month_open(db, request.month)
+
     # Получаем текущие очки за месяц
     transactions = crud.get_transactions_by_employee_and_month(
         db, request.employee_id, request.month
@@ -1385,6 +1399,282 @@ def adjust_points(
         "new_points": round(request.target_points, 2),
         "adjusted_points": round(diff_points, 2)
     }
+
+
+# ========== АНАЛИТИКА ДЛЯ DASHBOARD ==========
+
+@app.get("/api/dashboard/heatmap")
+def dashboard_heatmap(
+    days: int = 30,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Heat-map: количество приходов по (день недели × час).
+
+    Возвращает матрицу 7×24 + список самых активных слотов с примерами.
+    """
+    from datetime import timedelta as _td
+    end = datetime.now()
+    start = end - _td(days=max(1, min(days, 365)))
+    records = db.query(models.Attendance).filter(
+        models.Attendance.in_time >= start,
+        models.Attendance.in_time <= end,
+    ).all()
+
+    # weekday: 0=Mon..6=Sun (Python convention) — оставим как есть
+    matrix = [[0 for _ in range(24)] for _ in range(7)]
+    total = 0
+    for r in records:
+        if not r.in_time:
+            continue
+        wd = r.in_time.weekday()
+        h = r.in_time.hour
+        matrix[wd][h] += 1
+        total += 1
+
+    return {
+        "days": days,
+        "total_scans": total,
+        "matrix": matrix,  # rows = weekdays Mon..Sun, cols = hours 0..23
+    }
+
+
+@app.get("/api/dashboard/payroll-trend")
+def dashboard_payroll_trend(
+    months: int = 6,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """ФОТ за последние N месяцев. По каждому месяцу — общая сумма к выплате
+    и разбивка по сотрудникам (для drill-down модалки)."""
+    months = max(1, min(months, 24))
+    today = datetime.now()
+    employees = crud.get_employees(db, skip=0, limit=10000)
+
+    out = []
+    for i in range(months):
+        # i=0 — текущий месяц, i=months-1 — самый старый
+        y = today.year
+        m = today.month - i
+        while m <= 0:
+            m += 12
+            y -= 1
+        month_str = f"{y}-{m:02d}"
+        total = 0.0
+        breakdown = []
+        for emp in employees:
+            try:
+                p = _compute_payroll(db, emp, month_str)
+            except Exception:
+                continue
+            total += float(p.get("to_pay", 0) or 0)
+            breakdown.append({
+                "employee_id": emp.id,
+                "employee_name": emp.name,
+                "to_pay": round(float(p.get("to_pay", 0) or 0), 2),
+                "hours": float(p.get("total_hours_worked", 0) or 0),
+                "points": float(p.get("total_points", 0) or 0),
+            })
+        breakdown.sort(key=lambda x: x["to_pay"], reverse=True)
+        out.append({
+            "month": month_str,
+            "to_pay_total": round(total, 2),
+            "is_closed": crud.is_month_closed(db, month_str),
+            "breakdown": breakdown,
+        })
+    out.reverse()  # хронологически — старые слева, новые справа
+    return {"months": out}
+
+
+@app.get("/api/dashboard/top-employees")
+def dashboard_top_employees(
+    month: str = None,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Топы сотрудников за месяц: по часам, по очкам, по премиям, по штрафам.
+    Возвращает по каждому критерию полный отсортированный список."""
+    if not month:
+        month = crud.get_current_month_str()
+    employees = crud.get_employees(db, skip=0, limit=10000)
+    rows = []
+    for emp in employees:
+        try:
+            p = _compute_payroll(db, emp, month)
+        except Exception:
+            continue
+        rows.append({
+            "employee_id": emp.id,
+            "employee_name": emp.name,
+            "position": emp.position,
+            "hours": round(float(p.get("total_hours_worked", 0) or 0), 2),
+            "points": round(float(p.get("total_points", 0) or 0), 2),
+            "bonuses": round(float(p.get("bonuses_total", 0) or 0), 2),
+            "fines": round(float(p.get("fines_total", 0) or 0), 2),
+            "to_pay": round(float(p.get("to_pay", 0) or 0), 2),
+        })
+    return {
+        "month": month,
+        "by_hours": sorted(rows, key=lambda x: x["hours"], reverse=True),
+        "by_points": sorted(rows, key=lambda x: x["points"], reverse=True),
+        "by_bonuses": sorted(rows, key=lambda x: x["bonuses"], reverse=True),
+        "by_fines": sorted(rows, key=lambda x: x["fines"], reverse=True),
+        "by_to_pay": sorted(rows, key=lambda x: x["to_pay"], reverse=True),
+    }
+
+
+@app.get("/api/dashboard/payroll-forecast")
+def dashboard_payroll_forecast(
+    month: str = None,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Прогноз ФОТ: текущая сумма + линейная экстраполяция до конца месяца.
+
+    Логика: считаем «темп» = текущая_сумма / прошедшие_рабочие_дни,
+    прогноз = текущая_сумма + темп × оставшиеся_рабочие_дни.
+    Премии/авансы/штрафы прогнозом не дополняются — экстраполируем только
+    зарплатную часть (часы × ставка + сдельная)."""
+    if not month:
+        month = crud.get_current_month_str()
+    [year, mn] = month.split('-')
+    year, mn = int(year), int(mn)
+    last_day = calendar.monthrange(year, mn)[1]
+    today = datetime.now()
+    is_current = (today.year == year and today.month == mn)
+    day_today = today.day if is_current else last_day
+
+    # Считаем прошедшие/оставшиеся рабочие дни (без выходных)
+    elapsed_workdays = 0
+    remaining_workdays = 0
+    for d in range(1, last_day + 1):
+        wd = datetime(year, mn, d).weekday()
+        if wd < 5:  # пн-пт
+            if d <= day_today:
+                elapsed_workdays += 1
+            else:
+                remaining_workdays += 1
+
+    employees = crud.get_employees(db, skip=0, limit=10000)
+    current_to_pay = 0.0
+    current_base = 0.0
+    current_bonuses = 0.0
+    current_advances = 0.0
+    current_fines = 0.0
+    current_piecework = 0.0
+    for emp in employees:
+        try:
+            p = _compute_payroll(db, emp, month)
+        except Exception:
+            continue
+        current_to_pay += float(p.get("to_pay", 0) or 0)
+        current_base += float(p.get("base_rate", 0) or 0)
+        current_bonuses += float(p.get("bonuses_total", 0) or 0)
+        current_advances += float(p.get("advances_total", 0) or 0)
+        current_fines += float(p.get("fines_total", 0) or 0)
+        current_piecework += float(p.get("piecework_sum", 0) or 0)
+
+    # Прогноз: только base + piecework масштабируем
+    if elapsed_workdays > 0 and remaining_workdays > 0:
+        rate_per_day = (current_base + current_piecework) / elapsed_workdays
+        projected_extra = rate_per_day * remaining_workdays
+    else:
+        projected_extra = 0.0
+    projected_to_pay = current_to_pay + projected_extra
+
+    return {
+        "month": month,
+        "is_current_month": is_current,
+        "elapsed_workdays": elapsed_workdays,
+        "remaining_workdays": remaining_workdays,
+        "current": {
+            "to_pay": round(current_to_pay, 2),
+            "base_rate": round(current_base, 2),
+            "piecework": round(current_piecework, 2),
+            "bonuses": round(current_bonuses, 2),
+            "advances": round(current_advances, 2),
+            "fines": round(current_fines, 2),
+        },
+        "projected_to_pay": round(projected_to_pay, 2),
+        "projected_extra": round(projected_extra, 2),
+    }
+
+
+# ========== ЗАКРЫТИЕ РАСЧЁТНОГО МЕСЯЦА ==========
+
+@app.get("/api/payroll/closed-months", response_model=List[schemas.MonthClosure])
+def list_closed_months(
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Список всех закрытых (зафиксированных) расчётных месяцев."""
+    return crud.get_closed_months(db)
+
+
+@app.post("/api/payroll/months/{month}/close", response_model=schemas.MonthClosure)
+def close_payroll_month(
+    month: str,
+    db: Session = Depends(database.get_db),
+    admin: models.User = Depends(auth.require_admin),
+):
+    """Закрыть расчётный месяц.
+
+    После закрытия запрещается:
+      - создавать/удалять транзакции с датой этого месяца
+      - корректировать часы или очки за этот месяц
+
+    Идемпотентно: повторный вызов вернёт существующую запись.
+    """
+    if not month or len(month) != 7 or month[4] != '-':
+        raise HTTPException(status_code=400, detail="Неверный формат месяца (ожидаю YYYY-MM)")
+
+    # При закрытии гарантируем, что у каждого активного сотрудника есть SalarySnapshot
+    # на этот месяц — иначе при изменении ставок в будущем расчёт «уехал» бы.
+    employees = crud.get_employees(db, skip=0, limit=10000)
+    for emp in employees:
+        existing = (
+            db.query(models.SalarySnapshot)
+            .filter(
+                models.SalarySnapshot.employee_id == emp.id,
+                models.SalarySnapshot.month == month,
+            )
+            .first()
+        )
+        if not existing:
+            db.add(models.SalarySnapshot(
+                employee_id=emp.id,
+                month=month,
+                salary_rate=emp.rate or 0.0,
+                point_rate=emp.point_val or 0.0,
+            ))
+    db.commit()
+
+    return crud.close_month(db, month, admin)
+
+
+@app.post("/api/payroll/months/{month}/reopen")
+def reopen_payroll_month(
+    month: str,
+    db: Session = Depends(database.get_db),
+    _admin: models.User = Depends(auth.require_admin),
+):
+    """Снять закрытие месяца — снова разрешить редактирование."""
+    ok = crud.reopen_month(db, month)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Месяц не был закрыт")
+    return {"message": "Закрытие снято", "month": month}
+
+
+def _ensure_month_open(db: Session, month: str):
+    """Бросает 423 Locked, если месяц закрыт. Используется во всех мутирующих
+    эндпоинтах payroll/transactions."""
+    if not month:
+        return
+    if crud.is_month_closed(db, month):
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=f"Месяц {month} закрыт. Снимите закрытие, чтобы вносить изменения."
+        )
 
 
 # ========== ЗАПУСК СЕРВЕРА ==========

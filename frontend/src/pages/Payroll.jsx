@@ -6,12 +6,16 @@ import {
   TrendingUp, TrendingDown, Wallet, Target, Clock,
   ArrowLeft, UserRound, AlertTriangle, Trash2, Search,
   Banknote, ReceiptText, History, Printer, FileSpreadsheet,
-  Eye, EyeOff, ChevronLeft, ChevronRight,
+  Eye, EyeOff, ChevronLeft, ChevronRight, Lock, LockOpen,
 } from 'lucide-react';
 
 const RATES_REVEAL_TIMEOUT_MS = 20000;
 import { downloadCsv } from '../utils/exportCsv';
-import { getEmployees, calculatePayroll, createTransaction, getEmployeeTransactions, deleteTransaction, adjustHours, adjustPoints } from '../api/client';
+import {
+  getEmployees, calculatePayroll, createTransaction, getEmployeeTransactions,
+  deleteTransaction, adjustHours, adjustPoints,
+  getClosedMonths, closePayrollMonth, reopenPayrollMonth,
+} from '../api/client';
 import PayslipTemplate from '../components/PayslipTemplate';
 import TransactionModal from '../components/payroll/TransactionModal';
 import Modal from '../components/ui/Modal';
@@ -34,6 +38,22 @@ const Payroll = () => {
   const [showHoursModal, setShowHoursModal] = useState(false);
   const [showAdjustPointsModal, setShowAdjustPointsModal] = useState(false);
   const [showBonusesListModal, setShowBonusesListModal] = useState(false);
+
+  // Закрытые расчётные месяцы (Set из YYYY-MM). Подгружается при маунте и
+  // обновляется после успешного close/reopen.
+  const [closedMonths, setClosedMonths] = useState(() => new Set());
+  const isCurrentMonthClosed = closedMonths.has(selectedMonth);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
+
+  const refreshClosedMonths = useCallback(async () => {
+    try {
+      const data = await getClosedMonths();
+      setClosedMonths(new Set(data.map((c) => c.month)));
+    } catch (e) {
+      console.error('Не удалось загрузить список закрытых месяцев:', e);
+    }
+  }, []);
 
   // Приватность: ставки скрыты, пока админ не тапнет глаз. Авто-скрытие через 20с.
   const [ratesRevealed, setRatesRevealed] = useState(false);
@@ -157,7 +177,8 @@ const Payroll = () => {
 
   useEffect(() => {
     loadEmployees();
-  }, [loadEmployees]);
+    refreshClosedMonths();
+  }, [loadEmployees, refreshClosedMonths]);
 
   useEffect(() => {
     if (employees.length > 0) {
@@ -215,29 +236,91 @@ const Payroll = () => {
     setSelectedMonth(d.toISOString().slice(0, 7));
   }, [selectedMonth, setSelectedMonth]);
 
-  // Стрелочный селектор месяца — общий для master- и detail-видов
+  const handleCloseMonth = useCallback(async () => {
+    try {
+      await closePayrollMonth(selectedMonth);
+      await refreshClosedMonths();
+      setShowCloseConfirm(false);
+      // Обновим текущие данные, чтобы is_closed подтянулся
+      if (selectedEmployee) {
+        await loadEmployeeData(selectedEmployee, selectedMonth);
+      }
+      loadTotalPayroll();
+      toast.success('Месяц закрыт. Редактирование заблокировано.');
+    } catch (e) {
+      toast.error('Не удалось закрыть месяц: ' + (e.response?.data?.detail || e.message));
+    }
+  }, [selectedMonth, refreshClosedMonths, selectedEmployee, loadEmployeeData, loadTotalPayroll]);
+
+  const handleReopenMonth = useCallback(async () => {
+    try {
+      await reopenPayrollMonth(selectedMonth);
+      await refreshClosedMonths();
+      setShowReopenConfirm(false);
+      if (selectedEmployee) {
+        await loadEmployeeData(selectedEmployee, selectedMonth);
+      }
+      loadTotalPayroll();
+      toast.success('Закрытие снято. Редактирование разблокировано.');
+    } catch (e) {
+      toast.error('Не удалось снять закрытие: ' + (e.response?.data?.detail || e.message));
+    }
+  }, [selectedMonth, refreshClosedMonths, selectedEmployee, loadEmployeeData, loadTotalPayroll]);
+
+  // Стрелочный селектор месяца — общий для master- и detail-видов.
+  // Когда месяц закрыт, селектор подкрашивается янтарём и слева появляется замок.
   const monthSelector = (
-    <div className="flex items-center bg-white border border-slate-200 rounded-md h-9">
+    <div className={`flex items-center rounded-md h-9 border transition-colors ${
+      isCurrentMonthClosed
+        ? 'bg-amber-50 border-amber-200'
+        : 'bg-white border-slate-200'
+    }`}>
       <button
         type="button"
         onClick={handlePrevMonth}
-        className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-l-md transition-colors"
+        className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-white/50 rounded-l-md transition-colors"
         aria-label="Предыдущий месяц"
       >
         <ChevronLeft size={16} />
       </button>
-      <span className="px-3 text-sm font-medium text-slate-900 capitalize min-w-[140px] text-center">
+      <span className={`px-3 text-sm font-medium capitalize min-w-[140px] text-center inline-flex items-center justify-center gap-1.5 ${
+        isCurrentMonthClosed ? 'text-amber-800' : 'text-slate-900'
+      }`}>
+        {isCurrentMonthClosed && <Lock size={12} className="text-amber-600 flex-shrink-0" />}
         {formatMonth(selectedMonth)}
       </span>
       <button
         type="button"
         onClick={handleNextMonth}
-        className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-r-md transition-colors"
+        className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-white/50 rounded-r-md transition-colors"
         aria-label="Следующий месяц"
       >
         <ChevronRight size={16} />
       </button>
     </div>
+  );
+
+  // Кнопка «Закрыть/Открыть месяц» — общая для обоих видов
+  const closureButton = isCurrentMonthClosed ? (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={LockOpen}
+      onClick={() => setShowReopenConfirm(true)}
+      title="Снять закрытие месяца"
+    >
+      Открыть
+    </Button>
+  ) : (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={Lock}
+      onClick={() => setShowCloseConfirm(true)}
+      title="Закрыть расчётный месяц — заблокирует редактирование"
+    >
+      Закрыть
+    </Button>
   );
 
   const openTransactionModal = useCallback((type) => {
@@ -411,9 +494,11 @@ const Payroll = () => {
                   <div className={`font-mono font-semibold text-sm ${trans.type === 'fine' ? 'text-rose-600' : 'text-emerald-600'}`}>
                     {trans.type === 'fine' ? '-' : '+'}{trans.amount.toFixed(2)} ₴
                   </div>
-                  <button onClick={() => handleDeleteTransaction(trans.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors">
-                    <Trash2 size={14} />
-                  </button>
+                  {!isCurrentMonthClosed && (
+                    <button onClick={() => handleDeleteTransaction(trans.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
@@ -421,7 +506,49 @@ const Payroll = () => {
         )}
       </Modal>
     );
-  }, [showBonusesListModal, transactions, closeAllModals, handleDeleteTransaction]);
+  }, [showBonusesListModal, transactions, closeAllModals, handleDeleteTransaction, isCurrentMonthClosed]);
+
+  const CloseMonthConfirmModal = useMemo(() => (
+    <Modal open={showCloseConfirm} onClose={() => setShowCloseConfirm(false)} title="Закрыть месяц" icon={Lock} size="md">
+      <div className="p-5 space-y-4">
+        <p className="text-sm text-slate-700 leading-relaxed">
+          Закроется месяц <span className="font-semibold capitalize text-slate-900">{formatMonth(selectedMonth)}</span>.
+          Все расчёты по нему будут зафиксированы:
+        </p>
+        <ul className="text-xs text-slate-600 space-y-1 list-disc pl-5">
+          <li>Ставки сотрудников на этот месяц замораживаются (изменение в карточке не повлияет на прошлый расчёт)</li>
+          <li>Нельзя добавлять, удалять или править премии/авансы/штрафы/сдельную</li>
+          <li>Нельзя пересчитать часы и очки</li>
+        </ul>
+        <p className="text-xs text-slate-500">
+          В любой момент можно снять закрытие кнопкой «Открыть».
+        </p>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="secondary" onClick={() => setShowCloseConfirm(false)}>Отмена</Button>
+          <Button type="button" variant="primary" icon={Lock} onClick={handleCloseMonth}>Закрыть месяц</Button>
+        </div>
+      </div>
+    </Modal>
+  ), [showCloseConfirm, selectedMonth, handleCloseMonth]);
+
+  const ReopenMonthConfirmModal = useMemo(() => (
+    <Modal open={showReopenConfirm} onClose={() => setShowReopenConfirm(false)} title="Снять закрытие" icon={LockOpen} size="md">
+      <div className="p-5 space-y-4">
+        <p className="text-sm text-slate-700 leading-relaxed">
+          Снять закрытие с месяца <span className="font-semibold capitalize text-slate-900">{formatMonth(selectedMonth)}</span>?
+          После этого можно будет снова править все суммы.
+        </p>
+        <p className="text-xs text-slate-500">
+          Зафиксированные ставки в snapshot не удаляются — расчёт остаётся стабильным
+          до тех пор, пока ты сам не начнёшь править данные.
+        </p>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="secondary" onClick={() => setShowReopenConfirm(false)}>Отмена</Button>
+          <Button type="button" variant="primary" icon={LockOpen} onClick={handleReopenMonth}>Открыть</Button>
+        </div>
+      </div>
+    </Modal>
+  ), [showReopenConfirm, selectedMonth, handleReopenMonth]);
 
   // ==================== VIEW 1: MASTER LIST ====================
   if (!selectedEmployee) {
@@ -459,11 +586,29 @@ const Payroll = () => {
               {ratesRevealed ? <Eye size={14} /> : <EyeOff size={14} />}
               <span className="hidden sm:inline">Ставки</span>
             </button>
+            {closureButton}
             <Button variant="success" size="sm" icon={FileSpreadsheet} onClick={exportAllPayroll} disabled={employees.length === 0}>
               Excel
             </Button>
           </div>
         </div>
+
+        {/* Closed-month banner */}
+        {isCurrentMonthClosed && (
+          <div className="mb-4 flex items-center gap-2.5 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+            <Lock size={16} className="text-amber-600 flex-shrink-0" />
+            <span className="flex-1">
+              <span className="font-semibold capitalize">{formatMonth(selectedMonth)}</span> закрыт.
+              Все суммы зафиксированы, редактирование заблокировано.
+            </span>
+            <button
+              onClick={() => setShowReopenConfirm(true)}
+              className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline-offset-2 hover:underline"
+            >
+              Открыть
+            </button>
+          </div>
+        )}
 
         {/* Stats */}
         {!totalPayroll.loading && employees.length > 0 && (
@@ -523,15 +668,17 @@ const Payroll = () => {
             </ul>
           )}
         </div>
-        {transactionModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
+        {transactionModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}{CloseMonthConfirmModal}{ReopenMonthConfirmModal}
       </div>
     );
   }
 
   // ==================== VIEW 2: PROFESSIONAL DETAIL VIEW ====================
-  
+
   const totalAccrued = (payrollData?.base_rate || 0) + (payrollData?.piecework_sum || 0) + (payrollData?.bonuses_total || 0);
   const totalDeducted = (payrollData?.advances_total || 0) + (payrollData?.fines_total || 0);
+  // Месяц закрыт — все мутирующие действия в карточке отключены
+  const editLocked = isCurrentMonthClosed || payrollData?.is_closed === true;
 
   return (
     <div className="min-h-screen px-6 md:px-8 py-6">
@@ -549,10 +696,22 @@ const Payroll = () => {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {monthSelector}
+          {closureButton}
           <Button variant="secondary" size="sm" icon={Printer} onClick={handlePrint}>PDF</Button>
           <Button variant="success" size="sm" icon={FileSpreadsheet} onClick={exportCurrentPayslip}>Excel</Button>
         </div>
       </div>
+
+      {/* Closed-month banner inside employee card */}
+      {isCurrentMonthClosed && (
+        <div className="mb-4 flex items-center gap-2.5 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+          <Lock size={16} className="text-amber-600 flex-shrink-0" />
+          <span className="flex-1">
+            <span className="font-semibold capitalize">{formatMonth(selectedMonth)}</span> закрыт.
+            Суммы зафиксированы, кнопки редактирования заблокированы.
+          </span>
+        </div>
+      )}
 
       {!payrollData ? (
         <div className="py-20 text-center">
@@ -616,9 +775,11 @@ const Payroll = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setShowHoursModal(true)} className="text-xs text-slate-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                      изменить
-                    </button>
+                    {!editLocked && (
+                      <button onClick={() => setShowHoursModal(true)} className="text-xs text-slate-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                        изменить
+                      </button>
+                    )}
                     <div className="font-mono font-semibold text-slate-900 text-right w-24">{payrollData.base_rate.toFixed(2)} ₴</div>
                   </div>
                 </li>
@@ -635,9 +796,11 @@ const Payroll = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setShowAdjustPointsModal(true)} className="text-xs text-slate-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                      изменить
-                    </button>
+                    {!editLocked && (
+                      <button onClick={() => setShowAdjustPointsModal(true)} className="text-xs text-slate-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                        изменить
+                      </button>
+                    )}
                     <div className="font-mono font-semibold text-slate-900 text-right w-24">{payrollData.piecework_sum.toFixed(2)} ₴</div>
                   </div>
                 </li>
@@ -692,13 +855,21 @@ const Payroll = () => {
             <div className="space-y-3">
               {/* Actions */}
               <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <div className="text-xs text-slate-500 uppercase tracking-wider font-medium px-1 mb-2">Добавить</div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <Button variant="secondary" size="sm" icon={Target}        onClick={() => openTransactionModal('POINTS')}  className="justify-start">Сдельная</Button>
-                  <Button variant="secondary" size="sm" icon={TrendingUp}    onClick={() => openTransactionModal('BONUS')}   className="justify-start">Премия</Button>
-                  <Button variant="secondary" size="sm" icon={Banknote}      onClick={() => openTransactionModal('ADVANCE')} className="justify-start">Аванс</Button>
-                  <Button variant="secondary" size="sm" icon={AlertTriangle} onClick={() => openTransactionModal('FINE')}    className="justify-start">Штраф</Button>
+                <div className="text-xs text-slate-500 uppercase tracking-wider font-medium px-1 mb-2 flex items-center gap-1.5">
+                  Добавить
+                  {editLocked && <Lock size={11} className="text-amber-500" />}
                 </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <Button variant="secondary" size="sm" icon={Target}        onClick={() => openTransactionModal('POINTS')}  className="justify-start" disabled={editLocked}>Сдельная</Button>
+                  <Button variant="secondary" size="sm" icon={TrendingUp}    onClick={() => openTransactionModal('BONUS')}   className="justify-start" disabled={editLocked}>Премия</Button>
+                  <Button variant="secondary" size="sm" icon={Banknote}      onClick={() => openTransactionModal('ADVANCE')} className="justify-start" disabled={editLocked}>Аванс</Button>
+                  <Button variant="secondary" size="sm" icon={AlertTriangle} onClick={() => openTransactionModal('FINE')}    className="justify-start" disabled={editLocked}>Штраф</Button>
+                </div>
+                {editLocked && (
+                  <p className="mt-2 text-[10px] text-amber-700 leading-snug">
+                    Месяц закрыт. Открой его, чтобы вносить изменения.
+                  </p>
+                )}
               </div>
 
               {/* History */}
@@ -731,9 +902,11 @@ const Payroll = () => {
                                 )}
                                 <div className="flex items-center justify-between mt-0.5">
                                   <span className="text-[10px] text-slate-400 font-mono">{formatTransactionDate(trans)}</span>
-                                  <button onClick={() => handleDeleteTransaction(trans.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-colors">
-                                    <Trash2 size={11} />
-                                  </button>
+                                  {!editLocked && (
+                                    <button onClick={() => handleDeleteTransaction(trans.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-colors">
+                                      <Trash2 size={11} />
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -750,7 +923,7 @@ const Payroll = () => {
       )}
 
       {/* Modals remain the same */}
-      {transactionModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}
+      {transactionModal}{HoursModal}{AdjustPointsModal}{BonusesListModal}{CloseMonthConfirmModal}{ReopenMonthConfirmModal}
 
       {/* Hidden Payslip Template for printing */}
       <div className="hidden">

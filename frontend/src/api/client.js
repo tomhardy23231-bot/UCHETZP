@@ -128,6 +128,47 @@ export const calculatePayroll = async (employeeId, month) => {
   return response.data;
 };
 
+// ========== АНАЛИТИКА DASHBOARD ==========
+
+export const getDashboardHeatmap = async (days = 30) => {
+  const response = await api.get(`/api/dashboard/heatmap?days=${days}`);
+  return response.data;
+};
+
+export const getDashboardPayrollTrend = async (months = 6) => {
+  const response = await api.get(`/api/dashboard/payroll-trend?months=${months}`);
+  return response.data;
+};
+
+export const getDashboardTopEmployees = async (month = null) => {
+  const params = month ? `?month=${month}` : '';
+  const response = await api.get(`/api/dashboard/top-employees${params}`);
+  return response.data;
+};
+
+export const getDashboardPayrollForecast = async (month = null) => {
+  const params = month ? `?month=${month}` : '';
+  const response = await api.get(`/api/dashboard/payroll-forecast${params}`);
+  return response.data;
+};
+
+// ========== ЗАКРЫТИЕ МЕСЯЦА ==========
+
+export const getClosedMonths = async () => {
+  const response = await api.get('/api/payroll/closed-months');
+  return response.data;
+};
+
+export const closePayrollMonth = async (month) => {
+  const response = await api.post(`/api/payroll/months/${month}/close`);
+  return response.data;
+};
+
+export const reopenPayrollMonth = async (month) => {
+  const response = await api.post(`/api/payroll/months/${month}/reopen`);
+  return response.data;
+};
+
 // ========== ТРАНЗАКЦИИ ==========
 
 export const createTransaction = async (transaction) => {

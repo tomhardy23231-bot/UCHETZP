@@ -259,3 +259,52 @@ def get_current_datetime() -> datetime:
 def get_current_month_str() -> str:
     """Получить текущий месяц в формате YYYY-MM."""
     return datetime.now().strftime("%Y-%m")
+
+
+# ========== CRUD ДЛЯ ЗАКРЫТИЯ МЕСЯЦА ==========
+
+def is_month_closed(db: Session, month: str) -> bool:
+    """True, если месяц YYYY-MM закрыт."""
+    return db.query(models.MonthClosure).filter(models.MonthClosure.month == month).first() is not None
+
+
+def get_closed_months(db: Session) -> List[models.MonthClosure]:
+    """Список всех закрытых месяцев, отсортированных по дате месяца (новые сверху)."""
+    return (
+        db.query(models.MonthClosure)
+        .order_by(models.MonthClosure.month.desc())
+        .all()
+    )
+
+
+def close_month(db: Session, month: str, user: Optional[models.User] = None) -> models.MonthClosure:
+    """Закрыть месяц. Если уже закрыт — вернуть существующую запись."""
+    existing = db.query(models.MonthClosure).filter(models.MonthClosure.month == month).first()
+    if existing:
+        return existing
+    closure = models.MonthClosure(
+        month=month,
+        closed_by_user_id=user.id if user else None,
+        closed_by_username=user.username if user else None,
+    )
+    db.add(closure)
+    db.commit()
+    db.refresh(closure)
+    return closure
+
+
+def reopen_month(db: Session, month: str) -> bool:
+    """Снять закрытие месяца. True если что-то удалили."""
+    closure = db.query(models.MonthClosure).filter(models.MonthClosure.month == month).first()
+    if not closure:
+        return False
+    db.delete(closure)
+    db.commit()
+    return True
+
+
+def month_from_date_str(date_str: str) -> str:
+    """'YYYY-MM-DD' -> 'YYYY-MM'. Безопасно для пустых строк."""
+    if not date_str:
+        return ""
+    return date_str[:7]

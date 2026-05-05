@@ -142,6 +142,23 @@ class PayrollCalculation(BaseModel):
     details: list[PayrollDetail]
     salary_rate_used: float  # Ставка, использованная в расчёте (из снимка)
     point_rate_used: float   # Стоимость балла, использованная в расчёте (из снимка)
+    is_closed: bool = False  # Месяц закрыт — расчёт зафиксирован, редактирование заблокировано
+
+
+# ========== СХЕМЫ ДЛЯ ЗАКРЫТИЯ МЕСЯЦА ==========
+
+class MonthClosure(BaseModel):
+    """Запись о закрытом расчётном месяце."""
+    month: str  # YYYY-MM
+    closed_at: datetime
+    closed_by_username: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CloseMonthRequest(BaseModel):
+    month: str  # YYYY-MM
 
 
 # ========== СХЕМЫ ДЛЯ ЖУРНАЛА ==========
