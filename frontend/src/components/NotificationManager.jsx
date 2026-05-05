@@ -8,7 +8,7 @@ import { useTodayAttendance } from '../context/TodayAttendanceContext';
 import { UserRoundCheck, UserRoundX } from 'lucide-react';
 
 const NotificationManager = () => {
-  const { attendance } = useTodayAttendance();
+  const { attendance, loading } = useTodayAttendance();
   const audioRef = useRef(null);
   const isFirstLoadRef = useRef(true);
   const prevByIdRef = useRef(new Map());
@@ -84,7 +84,11 @@ const NotificationManager = () => {
   };
 
   useEffect(() => {
-    // Первая загрузка — просто запоминаем состояние, ничего не сигналим
+    // Дожидаемся первого реального ответа от сервера. До этого attendance — пустой
+    // initial-стейт контекста, и если на нём «зафиксировать базу», следующий polling
+    // выглядел бы как пачка новых приходов и спамил бы toast'ы при каждой перезагрузке.
+    if (loading) return;
+
     if (isFirstLoadRef.current) {
       prevByIdRef.current = new Map(attendance.map((r) => [r.id, r]));
       isFirstLoadRef.current = false;
@@ -101,7 +105,7 @@ const NotificationManager = () => {
     });
 
     prevByIdRef.current = new Map(attendance.map((r) => [r.id, r]));
-  }, [attendance]);
+  }, [attendance, loading]);
 
   return null;
 };

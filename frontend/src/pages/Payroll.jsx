@@ -6,7 +6,10 @@ import {
   TrendingUp, TrendingDown, Wallet, Target, Clock,
   ArrowLeft, UserRound, AlertTriangle, Trash2, Search,
   Banknote, ReceiptText, History, Printer, FileSpreadsheet,
+  Eye, EyeOff, ChevronLeft, ChevronRight,
 } from 'lucide-react';
+
+const RATES_REVEAL_TIMEOUT_MS = 20000;
 import { downloadCsv } from '../utils/exportCsv';
 import { getEmployees, calculatePayroll, createTransaction, getEmployeeTransactions, deleteTransaction, adjustHours, adjustPoints } from '../api/client';
 import PayslipTemplate from '../components/PayslipTemplate';
@@ -31,6 +34,14 @@ const Payroll = () => {
   const [showHoursModal, setShowHoursModal] = useState(false);
   const [showAdjustPointsModal, setShowAdjustPointsModal] = useState(false);
   const [showBonusesListModal, setShowBonusesListModal] = useState(false);
+
+  // Приватность: ставки скрыты, пока админ не тапнет глаз. Авто-скрытие через 20с.
+  const [ratesRevealed, setRatesRevealed] = useState(false);
+  useEffect(() => {
+    if (!ratesRevealed) return;
+    const t = setTimeout(() => setRatesRevealed(false), RATES_REVEAL_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [ratesRevealed]);
 
   // Состояния для модалок корректировки часов/очков
   const [targetHours, setTargetHours] = useState('');
@@ -159,12 +170,13 @@ const Payroll = () => {
     emp.position.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const selectEmployee = useCallback(async (employee) => {
-    setSelectedEmployee(employee);
+  // Загрузка расчёта и транзакций сотрудника за конкретный месяц
+  const loadEmployeeData = useCallback(async (employee, month) => {
+    if (!employee) return;
     try {
       const [payroll, trans] = await Promise.all([
-        calculatePayroll(employee.id, selectedMonth),
-        getEmployeeTransactions(employee.id, selectedMonth)
+        calculatePayroll(employee.id, month),
+        getEmployeeTransactions(employee.id, month)
       ]);
       setPayrollData(payroll);
       setTransactions(trans);
@@ -173,13 +185,60 @@ const Payroll = () => {
     } catch (error) {
       console.error('Ошибка загрузки данных:', error);
     }
-  }, [selectedMonth]);
+  }, []);
+
+  const selectEmployee = useCallback((employee) => {
+    setSelectedEmployee(employee);
+  }, []);
+
+  // Перезагружаем данные при выборе сотрудника или смене месяца внутри карточки
+  useEffect(() => {
+    if (!selectedEmployee) return;
+    loadEmployeeData(selectedEmployee, selectedMonth);
+  }, [selectedEmployee, selectedMonth, loadEmployeeData]);
 
   const backToList = useCallback(() => {
     setSelectedEmployee(null);
     setPayrollData(null);
     setTransactions([]);
   }, []);
+
+  const handlePrevMonth = useCallback(() => {
+    const d = new Date(selectedMonth + '-02');
+    d.setMonth(d.getMonth() - 1);
+    setSelectedMonth(d.toISOString().slice(0, 7));
+  }, [selectedMonth, setSelectedMonth]);
+
+  const handleNextMonth = useCallback(() => {
+    const d = new Date(selectedMonth + '-02');
+    d.setMonth(d.getMonth() + 1);
+    setSelectedMonth(d.toISOString().slice(0, 7));
+  }, [selectedMonth, setSelectedMonth]);
+
+  // Стрелочный селектор месяца — общий для master- и detail-видов
+  const monthSelector = (
+    <div className="flex items-center bg-white border border-slate-200 rounded-md h-9">
+      <button
+        type="button"
+        onClick={handlePrevMonth}
+        className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-l-md transition-colors"
+        aria-label="Предыдущий месяц"
+      >
+        <ChevronLeft size={16} />
+      </button>
+      <span className="px-3 text-sm font-medium text-slate-900 capitalize min-w-[140px] text-center">
+        {formatMonth(selectedMonth)}
+      </span>
+      <button
+        type="button"
+        onClick={handleNextMonth}
+        className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-r-md transition-colors"
+        aria-label="Следующий месяц"
+      >
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
 
   const openTransactionModal = useCallback((type) => {
     setTransactionModalType(type);
@@ -199,53 +258,53 @@ const Payroll = () => {
         type: transactionModalType,
         ...data,
       });
-      await selectEmployee(selectedEmployee);
+      await loadEmployeeData(selectedEmployee, selectedMonth);
       loadTotalPayroll();
       closeAllModals();
       toast.success('Сохранено');
     } catch (error) {
       toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
-  }, [transactionModalType, selectedEmployee, selectEmployee, closeAllModals, loadTotalPayroll]);
+  }, [transactionModalType, selectedEmployee, selectedMonth, loadEmployeeData, closeAllModals, loadTotalPayroll]);
 
   const handleDeleteTransaction = useCallback(async (id) => {
     if (confirm('Удалить эту запись?')) {
       try {
         await deleteTransaction(id);
-        await selectEmployee(selectedEmployee);
+        await loadEmployeeData(selectedEmployee, selectedMonth);
         loadTotalPayroll();
         toast.success('Запись удалена');
       } catch (error) {
         toast.error('Ошибка удаления: ' + (error.response?.data?.detail || error.message));
       }
     }
-  }, [selectEmployee, selectedEmployee, loadTotalPayroll]);
+  }, [loadEmployeeData, selectedEmployee, selectedMonth, loadTotalPayroll]);
 
   const handleAdjustHours = useCallback(async (e) => {
     e.preventDefault();
     try {
       const result = await adjustHours(selectedEmployee.id, selectedMonth, parseFloat(targetHours));
-      await selectEmployee(selectedEmployee);
+      await loadEmployeeData(selectedEmployee, selectedMonth);
       loadTotalPayroll();
       closeAllModals();
       toast.success(result.message);
     } catch (error) {
       toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
-  }, [selectedEmployee, selectedMonth, targetHours, selectEmployee, closeAllModals, loadTotalPayroll]);
+  }, [selectedEmployee, selectedMonth, targetHours, loadEmployeeData, closeAllModals, loadTotalPayroll]);
 
   const handleAdjustPoints = useCallback(async (e) => {
     e.preventDefault();
     try {
       const result = await adjustPoints(selectedEmployee.id, selectedMonth, parseFloat(targetPoints));
-      await selectEmployee(selectedEmployee);
+      await loadEmployeeData(selectedEmployee, selectedMonth);
       loadTotalPayroll();
       closeAllModals();
       toast.success(result.message);
     } catch (error) {
       toast.error('Ошибка: ' + (error.response?.data?.detail || error.message));
     }
-  }, [selectedEmployee, selectedMonth, targetPoints, selectEmployee, closeAllModals, loadTotalPayroll]);
+  }, [selectedEmployee, selectedMonth, targetPoints, loadEmployeeData, closeAllModals, loadTotalPayroll]);
 
   const getTransactionIcon = (type) => {
     switch (type) {
@@ -375,12 +434,20 @@ const Payroll = () => {
                 className="h-9 pl-8 pr-3 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-56"
               />
             </div>
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="h-9 px-2.5 bg-white border border-slate-200 rounded-md text-sm font-medium text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-            />
+            {monthSelector}
+            <button
+              type="button"
+              onClick={() => setRatesRevealed(v => !v)}
+              title={ratesRevealed ? 'Скрыть ставки' : 'Показать ставки'}
+              className={`h-9 px-2.5 inline-flex items-center gap-1.5 rounded-md border text-sm font-medium transition-colors ${
+                ratesRevealed
+                  ? 'bg-slate-900 text-white border-slate-900 hover:bg-slate-800'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              {ratesRevealed ? <Eye size={14} /> : <EyeOff size={14} />}
+              <span className="hidden sm:inline">Ставки</span>
+            </button>
             <Button variant="success" size="sm" icon={FileSpreadsheet} onClick={exportAllPayroll} disabled={employees.length === 0}>
               Excel
             </Button>
@@ -430,8 +497,13 @@ const Payroll = () => {
                       <div className="text-sm font-medium text-slate-900 truncate">{emp.name}</div>
                       <div className="text-xs text-slate-500 truncate">{emp.position}</div>
                     </div>
-                    <div className="text-xs text-slate-500 font-mono hidden sm:block">
-                      ставка <span className="font-semibold text-slate-700">{emp.rate.toFixed(0)} ₴</span>
+                    <div className="text-xs text-slate-500 font-mono hidden sm:block tabular-nums">
+                      ставка{' '}
+                      {ratesRevealed ? (
+                        <span className="font-semibold text-slate-700">{emp.rate.toFixed(0)} ₴</span>
+                      ) : (
+                        <span className="font-semibold text-slate-300 tracking-wider select-none">••••• ₴</span>
+                      )}
                     </div>
                     <ArrowLeft className="text-slate-300 rotate-180" size={16} />
                   </button>
@@ -465,12 +537,7 @@ const Payroll = () => {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <input
-            type="month"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="h-9 px-2.5 bg-white border border-slate-200 rounded-md text-sm font-medium text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none"
-          />
+          {monthSelector}
           <Button variant="secondary" size="sm" icon={Printer} onClick={handlePrint}>PDF</Button>
           <Button variant="success" size="sm" icon={FileSpreadsheet} onClick={exportCurrentPayslip}>Excel</Button>
         </div>

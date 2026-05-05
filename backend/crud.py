@@ -22,8 +22,19 @@ def get_employee_by_card(db: Session, card_id: str) -> Optional[models.Employee]
 
 
 def get_employees(db: Session, skip: int = 0, limit: int = 100) -> List[models.Employee]:
-    """Получить список всех сотрудников."""
-    return db.query(models.Employee).offset(skip).limit(limit).all()
+    """Получить список всех сотрудников.
+
+    Сортируем по id (порядок добавления). Без явного ORDER BY Postgres возвращает
+    строки в произвольном порядке: после UPDATE строка физически переезжает в конец
+    heap-а, и отредактированный сотрудник «падал вниз» во всех списках.
+    """
+    return (
+        db.query(models.Employee)
+        .order_by(models.Employee.id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 def create_employee(db: Session, employee: schemas.EmployeeCreate) -> models.Employee:
