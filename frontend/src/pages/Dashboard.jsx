@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Clock, UserRoundCheck, UserRoundX, UsersRound, Timer,
-  AlertTriangle, AlarmClock,
+  AlertTriangle, AlarmClock, ChevronDown,
 } from 'lucide-react';
 import { useTodayAttendance } from '../context/TodayAttendanceContext';
 import { getAttendanceJournal } from '../api/client';
@@ -16,6 +16,7 @@ const Dashboard = () => {
   const { attendance } = useTodayAttendance();
   const [weekJournal, setWeekJournal] = useState([]);
   const [now, setNow] = useState(() => new Date());
+  const [expandedLate, setExpandedLate] = useState(null); // имя или null
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000);
@@ -42,15 +43,45 @@ const Dashboard = () => {
         (h === LATE_THRESHOLD_HOUR && m > LATE_THRESHOLD_MIN);
       if (!isLate) return;
       const minutesLate = (h * 60 + m) - (LATE_THRESHOLD_HOUR * 60 + LATE_THRESHOLD_MIN);
-      const cur = counter.get(r.employee_name) || { name: r.employee_name, count: 0, totalMinutes: 0 };
+      const cur = counter.get(r.employee_name) || {
+        name: r.employee_name,
+        count: 0,
+        totalMinutes: 0,
+        incidents: [],
+      };
       cur.count += 1;
       cur.totalMinutes += minutesLate;
+      cur.incidents.push({
+        date: r.date,
+        inTime: r.in_time,
+        outTime: r.out_time,
+        totalHours: r.total_hours,
+        minutesLate,
+      });
       counter.set(r.employee_name, cur);
+    });
+    // Сортируем инциденты у каждого сотрудника — свежие сверху
+    counter.forEach((v) => {
+      v.incidents.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     });
     return Array.from(counter.values())
       .sort((a, b) => b.count - a.count || b.totalMinutes - a.totalMinutes)
       .slice(0, 3);
   }, [weekJournal]);
+
+  const formatLateDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+
+  const formatHoursDecimal = (h) => {
+    if (h == null) return '—';
+    const totalMin = Math.round(Number(h) * 60);
+    const hh = Math.floor(totalMin / 60);
+    const mm = totalMin % 60;
+    return `${hh}ч ${mm.toString().padStart(2, '0')}м`;
+  };
 
   const formatTime = (dateString) => {
     if (!dateString) return '—';
@@ -132,19 +163,71 @@ const Dashboard = () => {
             {topLate.map((p, idx) => {
               const totalH = Math.floor(p.totalMinutes / 60);
               const totalM = p.totalMinutes % 60;
+              const isOpen = expandedLate === p.name;
               return (
-                <div key={p.name} className="flex items-center gap-3 px-4 py-2.5">
-                  <div className="w-6 text-center text-sm font-semibold text-slate-400">
-                    {idx + 1}
-                  </div>
-                  <Avatar name={p.name} size="sm" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-slate-900 truncate">{p.name}</div>
-                  </div>
-                  <div className="text-xs text-slate-500 font-mono">
-                    <span className="text-rose-600 font-semibold">{p.count}</span> опозданий ·{' '}
-                    {totalH > 0 ? `${totalH}ч ` : ''}{totalM}м
-                  </div>
+                <div key={p.name}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedLate(isOpen ? null : p.name)}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/60 transition-colors text-left"
+                  >
+                    <div className="w-6 text-center text-sm font-semibold text-slate-400">
+                      {idx + 1}
+                    </div>
+                    <Avatar name={p.name} size="sm" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-900 truncate">{p.name}</div>
+                    </div>
+                    <div className="text-xs text-slate-500 font-mono">
+                      <span className="text-rose-600 font-semibold">{p.count}</span> опозданий ·{' '}
+                      {totalH > 0 ? `${totalH}ч ` : ''}{totalM}м
+                    </div>
+                    <ChevronDown
+                      size={14}
+                      className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+
+                  {isOpen && (
+                    <div className="bg-slate-50/60 border-t border-slate-100">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-[10px] text-slate-400 uppercase tracking-wider">
+                            <th className="text-left font-medium px-4 py-2 pl-[3.25rem]">Когда</th>
+                            <th className="text-left font-medium px-2 py-2">Пришёл</th>
+                            <th className="text-left font-medium px-2 py-2">Опоздал</th>
+                            <th className="text-left font-medium px-2 py-2">Ушёл</th>
+                            <th className="text-left font-medium px-4 py-2">Отработал</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {p.incidents.map((inc, i) => {
+                            const lateH = Math.floor(inc.minutesLate / 60);
+                            const lateM = inc.minutesLate % 60;
+                            return (
+                              <tr key={i} className="border-t border-slate-100">
+                                <td className="px-4 py-2 pl-[3.25rem] text-slate-700 capitalize">
+                                  {formatLateDate(inc.date)}
+                                </td>
+                                <td className="px-2 py-2 text-slate-700 font-mono">
+                                  {inc.inTime}
+                                </td>
+                                <td className="px-2 py-2 font-mono text-rose-600">
+                                  +{lateH > 0 ? `${lateH}ч ` : ''}{lateM}м
+                                </td>
+                                <td className="px-2 py-2 text-slate-700 font-mono">
+                                  {inc.outTime || <span className="text-slate-300">—</span>}
+                                </td>
+                                <td className="px-4 py-2 text-slate-700">
+                                  {inc.totalHours != null ? formatHoursDecimal(inc.totalHours) : <span className="text-slate-400">не закрыта</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               );
             })}
