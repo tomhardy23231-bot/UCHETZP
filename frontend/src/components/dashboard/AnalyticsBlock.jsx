@@ -113,17 +113,19 @@ const ForecastTile = ({ data, onClick }) => {
   const {
     current, projected_accrued, projected_extra,
     elapsed_workdays, remaining_workdays, is_current_month,
-    smart_forecast, history,
+    smart_forecast, history, confidence, accuracy,
   } = data;
   const accruedNow = current.accrued ?? 0;
-  // Для прошлых/будущих месяцев показываем итог как есть (smart_forecast = null)
-  // Для текущего — приоритет smart_forecast.value (блендинг pace + history)
   const headline = is_current_month
     ? (smart_forecast?.value ?? projected_accrued)
     : accruedNow;
   const total = elapsed_workdays + remaining_workdays;
   const pct = total > 0 ? Math.round((elapsed_workdays / total) * 100) : 100;
-  const usingHistory = is_current_month && smart_forecast?.method === 'blended';
+  const usingSkill = is_current_month && smart_forecast?.method === 'skill_weighted';
+  const weights = smart_forecast?.weights || {};
+  // Топ-сигнал по весу — для подписи
+  const topSignal = Object.entries(weights).sort((a, b) => b[1] - a[1])[0];
+  const SIGNAL_RU = { pace: 'темп', dow: 'паттерны по дням недели', history: 'история' };
 
   return (
     <button
@@ -132,38 +134,47 @@ const ForecastTile = ({ data, onClick }) => {
       className="text-left w-full bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-lg p-5 hover:shadow-lg transition-shadow group h-full flex flex-col justify-between min-h-[160px]"
     >
       <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] uppercase tracking-wider text-slate-400 font-medium">
+        <div className="flex items-center justify-between mb-1 gap-2">
+          <span className="text-[11px] uppercase tracking-wider text-slate-400 font-medium truncate">
             {is_current_month ? 'Прогноз ФОТ к концу месяца' : 'ФОТ за месяц'}
           </span>
-          <Activity size={14} className="text-slate-400 group-hover:text-white transition-colors" />
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {accuracy && (
+              <span
+                className="text-[9px] uppercase tracking-wider text-emerald-300 bg-emerald-900/40 px-1.5 py-0.5 rounded font-medium"
+                title={`Средняя ошибка прогноза по ${accuracy.samples} наблюдениям`}
+              >
+                ±{accuracy.mape_pct}%
+              </span>
+            )}
+            <Activity size={14} className="text-slate-400 group-hover:text-white transition-colors" />
+          </div>
         </div>
         <div className="text-3xl font-bold tabular-nums mt-2">
           {formatMoney(headline)} <span className="text-lg text-slate-400">₴</span>
         </div>
+        {is_current_month && confidence && confidence.sigma > 0 && (
+          <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+            от <span className="text-white font-semibold">{formatMoney(confidence.low)}</span>
+            {' '}до <span className="text-white font-semibold">{formatMoney(confidence.high)}</span> ₴
+          </div>
+        )}
         <div className="text-[11px] text-slate-400 mt-1 leading-snug">
           {is_current_month ? (
-            usingHistory ? (
-              <>
-                уже начислено <span className="text-white font-semibold">{formatMoney(accruedNow)} ₴</span>{' '}
-                · блендинг текущего темпа <span className="text-white font-semibold">{Math.round(smart_forecast.weight_pace * 100)}%</span>
-                {' '}и средней по {history.months_used}{' '}
-                {history.months_used === 1 ? 'месяцу' : history.months_used < 5 ? 'месяцам' : 'месяцам'}
-                {' '}<span className="text-white font-semibold">{Math.round(smart_forecast.weight_history * 100)}%</span>
-              </>
-            ) : (
-              <>
-                уже начислено <span className="text-white font-semibold">{formatMoney(accruedNow)} ₴</span>
-                {' '}за <span className="text-white font-semibold">{elapsed_workdays}</span> раб. дн.
-                {remaining_workdays > 0 && (
-                  <>
-                    {' '}· темп × <span className="text-white font-semibold">{remaining_workdays}</span> оставшихся
-                    {' '}≈ <span className="text-white font-semibold">+{formatMoney(projected_extra)} ₴</span>
-                  </>
-                )}
-                <span className="text-amber-300/80"> (без истории — мало данных)</span>
-              </>
-            )
+            <>
+              уже начислено <span className="text-white font-semibold">{formatMoney(accruedNow)} ₴</span>
+              {topSignal && topSignal[1] > 0 && (
+                <>
+                  {' '}· основа <span className="text-white font-semibold">{SIGNAL_RU[topSignal[0]]}</span>
+                  {' '}<span className="text-white font-semibold">{Math.round(topSignal[1] * 100)}%</span>
+                </>
+              )}
+              {usingSkill ? (
+                <span className="text-emerald-300/80"> · обучен на {smart_forecast.snapshots_learned_from} наблюдениях</span>
+              ) : (
+                <span className="text-amber-300/70"> · собирает данные для самообучения</span>
+              )}
+            </>
           ) : (
             <>часовая часть + сдельная + премии · итог за <span className="capitalize">{formatMonth(data.month)}</span></>
           )}
@@ -194,12 +205,15 @@ const ForecastModal = ({ data, onClose }) => {
   const {
     current, projected_to_pay, projected_accrued, projected_extra,
     elapsed_workdays, remaining_workdays, is_current_month, month,
-    smart_forecast, history,
+    smart_forecast, history, confidence, accuracy,
   } = data;
   const accruedNow = current.accrued ?? (current.base_rate + current.piecework + current.bonuses);
   const ratePerDay = elapsed_workdays > 0 ? (current.base_rate + current.piecework) / elapsed_workdays : 0;
   const finalForecast = is_current_month ? (smart_forecast?.value ?? projected_accrued) : accruedNow;
-  const usingHistory = is_current_month && smart_forecast?.method === 'blended';
+  const usingSkill = is_current_month && smart_forecast?.method === 'skill_weighted';
+  const weights = smart_forecast?.weights || {};
+  const signals = smart_forecast?.signals || {};
+  const mapes = smart_forecast?.signal_mapes || {};
   const maxSample = history?.samples?.length
     ? Math.max(...history.samples.map((s) => s.accrued), finalForecast)
     : finalForecast;
@@ -295,45 +309,69 @@ const ForecastModal = ({ data, onClose }) => {
           )}
         </div>
 
-        {is_current_month && (
-          <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-2">
-            <p className="text-xs font-medium text-blue-900 uppercase tracking-wider">Как считается прогноз</p>
-            <p className="text-[11px] text-blue-900 leading-relaxed">
-              <span className="font-semibold">1) По текущему темпу:</span>{' '}
-              <span className="font-mono">
-                {formatMoney(current.base_rate + current.piecework)} ÷ {elapsed_workdays}
-                {' '}= {formatMoney(ratePerDay)} ₴/день × {remaining_workdays}
-                {' '}≈ +{formatMoney(projected_extra)} ₴
-              </span>
-              <br />
-              ⇒ итог по темпу <span className="font-semibold font-mono">{formatMoney(projected_accrued)} ₴</span>
+        {is_current_month && smart_forecast && (
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <p className="text-xs font-medium text-blue-900 uppercase tracking-wider">Три сигнала прогноза</p>
+              {accuracy && (
+                <span className="text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded font-semibold">
+                  средняя ошибка ±{accuracy.mape_pct}% · {accuracy.samples} наблюд.
+                </span>
+              )}
+            </div>
+
+            {/* Три сигнала рядом — value + weight + per-signal MAPE */}
+            <div className="space-y-2">
+              <SignalBar
+                label="Темп"
+                description="линейная экстраполяция текущего темпа"
+                value={signals.pace}
+                weight={weights.pace}
+                mape={mapes.pace}
+                color="blue"
+              />
+              <SignalBar
+                label="Дни недели"
+                description={`по каждому сотруднику · ${smart_forecast.dow_data_points} наблюдений за ${smart_forecast.dow_lookback_days} дней`}
+                value={signals.dow}
+                weight={weights.dow}
+                mape={mapes.dow}
+                color="violet"
+              />
+              <SignalBar
+                label="История"
+                description={`среднее за ${history.months_used} ${history.months_used === 1 ? 'месяц' : history.months_used < 5 ? 'месяца' : 'месяцев'}`}
+                value={signals.history}
+                weight={weights.history}
+                mape={mapes.history}
+                color="amber"
+              />
+            </div>
+
+            <div className="bg-white border border-blue-200 rounded-md p-2.5 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">Итоговый прогноз</div>
+                <div className="text-lg font-bold tabular-nums text-emerald-700">
+                  {formatMoney(finalForecast)} ₴
+                </div>
+                {confidence && confidence.sigma > 0 && (
+                  <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                    интервал: {formatMoney(confidence.low)} – {formatMoney(confidence.high)} ₴
+                  </div>
+                )}
+              </div>
+              <div className="text-right text-[10px] text-slate-500 leading-snug max-w-[180px]">
+                {usingSkill ? (
+                  <>веса подобраны<br />по точности сигналов<br />за <span className="font-semibold">{smart_forecast.snapshots_learned_from}</span> наблюдений</>
+                ) : (
+                  <>веса по доступности данных<br />и прогрессу месяца<br />(ещё мало истории)</>
+                )}
+              </div>
+            </div>
+
+            <p className="text-[10px] text-blue-800/80 leading-relaxed pt-1 border-t border-blue-200">
+              Прогноз самообучается: каждый день сохраняется снимок с тремя сигналами. Когда месяц завершается — фиксируется факт, и сигнал, который ошибался меньше, начинает получать больший вес в следующих расчётах. Премии/авансы/штрафы экстраполировать нельзя — они уже учтены в начисленном «как есть».
             </p>
-            {usingHistory ? (
-              <>
-                <p className="text-[11px] text-blue-900 leading-relaxed">
-                  <span className="font-semibold">2) По истории:</span>{' '}
-                  средний ФОТ за {history.months_used}{' '}
-                  {history.months_used === 1 ? 'предыдущий месяц' : 'предыдущих месяца'}{' '}
-                  = <span className="font-semibold font-mono">{formatMoney(history.avg_accrued)} ₴</span>
-                </p>
-                <p className="text-[11px] text-blue-900 leading-relaxed">
-                  <span className="font-semibold">3) Итог:</span>{' '}
-                  блендинг по тому, сколько месяца прошло{' '}
-                  <span className="font-mono">
-                    ({Math.round(smart_forecast.weight_pace * 100)}% темп ·{' '}
-                    {Math.round(smart_forecast.weight_history * 100)}% история){' '}
-                    = {formatMoney(finalForecast)} ₴
-                  </span>
-                </p>
-                <p className="text-[10px] text-blue-800/80 leading-relaxed pt-1 border-t border-blue-200">
-                  Чем больше дней месяца прошло — тем больше доверия к темпу. В начале месяца история перевешивает (один странный день не должен ломать прогноз). К концу месяца — почти полностью верим темпу.
-                </p>
-              </>
-            ) : (
-              <p className="text-[10px] text-amber-800 leading-relaxed pt-1 border-t border-blue-200">
-                Истории пока нет (нет полных прошлых месяцев с данными), поэтому прогноз чисто по текущему темпу. По мере накопления месяцев точность будет расти.
-              </p>
-            )}
           </div>
         )}
       </div>
@@ -683,6 +721,43 @@ const ModalShell = ({ title, onClose, icon: Icon, children }) => (
     </div>
   </div>
 );
+
+// Один сигнал прогноза: лейбл, текущее значение, его вес в блендинге, и MAPE если есть
+const SignalBar = ({ label, description, value, weight, mape, color }) => {
+  const colorMap = {
+    blue:   { bg: 'bg-blue-100',   bar: 'bg-blue-500',   text: 'text-blue-900' },
+    violet: { bg: 'bg-violet-100', bar: 'bg-violet-500', text: 'text-violet-900' },
+    amber:  { bg: 'bg-amber-100',  bar: 'bg-amber-500',  text: 'text-amber-900' },
+  }[color] || { bg: 'bg-slate-100', bar: 'bg-slate-500', text: 'text-slate-900' };
+  const w = (weight ?? 0) * 100;
+  const hasValue = value != null;
+  return (
+    <div className="bg-white/80 border border-blue-100 rounded-md p-2 space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className={`text-xs font-semibold ${colorMap.text} truncate`}>{label}</div>
+          <div className="text-[10px] text-slate-500 truncate">{description}</div>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className={`text-sm font-mono font-semibold tabular-nums ${hasValue ? 'text-slate-900' : 'text-slate-300'}`}>
+            {hasValue ? `${formatMoney(value)} ₴` : '—'}
+          </div>
+          {mape != null && (
+            <div className="text-[9px] text-slate-500">истор. ошибка ±{mape}%</div>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className={`flex-1 h-1.5 ${colorMap.bg} rounded overflow-hidden`}>
+          <div className={`h-full ${colorMap.bar} transition-all`} style={{ width: `${w}%` }} />
+        </div>
+        <span className="text-[10px] font-mono font-semibold text-slate-700 tabular-nums w-10 text-right">
+          {w > 0 ? `${Math.round(w)}%` : '—'}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 const Stat = ({ label, value, mono, accent }) => (
   <div className="bg-slate-50 border border-slate-200 rounded-md p-3">

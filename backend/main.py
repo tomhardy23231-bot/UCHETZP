@@ -1537,18 +1537,192 @@ def dashboard_top_employees(
     }
 
 
+# ========== УМНЫЙ ПРОГНОЗ ФОТ ==========
+
+def _compute_dow_projection(db, employees, year, mn, day_today, last_day):
+    """Прогноз доначисления на остаток месяца на основе day-of-week паттернов
+    КАЖДОГО сотрудника индивидуально за последние 60 дней.
+
+    Идея: разные люди работают по-разному. Один встаёт по понедельникам, другой
+    активен только во второй половине недели. Среднее по всем замазывает эти
+    паттерны. Считаем для каждого сотрудника отдельно его средние часы по дням
+    недели за последние 60 дней, потом по оставшимся рабочим дням текущего
+    месяца смотрим — какой weekday у этого дня, и берём его типичные часы.
+    """
+    from collections import defaultdict
+    from datetime import timedelta as _td
+
+    today = datetime.now()
+    lookback_start = today - _td(days=60)
+
+    closed_shifts = db.query(models.Attendance).filter(
+        models.Attendance.in_time >= lookback_start,
+        models.Attendance.out_time != None,  # noqa: E711
+    ).all()
+
+    # per_emp_wd[employee_id][weekday] = [hours, hours, ...]
+    per_emp_wd = defaultdict(lambda: defaultdict(list))
+    for r in closed_shifts:
+        if not r.out_time or not r.in_time:
+            continue
+        in_t = r.in_time.replace(tzinfo=None) if r.in_time.tzinfo else r.in_time
+        out_t = r.out_time.replace(tzinfo=None) if r.out_time.tzinfo else r.out_time
+        hours = (out_t - in_t).total_seconds() / 3600
+        if 0 < hours < 24:
+            per_emp_wd[r.employee_id][in_t.weekday()].append(hours)
+
+    total_data_points = sum(
+        len(v) for emp_dict in per_emp_wd.values() for v in emp_dict.values()
+    )
+
+    # Какие weekdays у оставшихся рабочих дней месяца
+    remaining_wds = []
+    for d in range(day_today + 1, last_day + 1):
+        wd = datetime(year, mn, d).weekday()
+        if wd < 5:
+            remaining_wds.append(wd)
+
+    projection_extra = 0.0
+    for emp in employees:
+        emp_data = per_emp_wd.get(emp.id)
+        if not emp_data:
+            continue
+        hourly = (emp.rate or 0) / (STANDARD_WORKING_DAYS * STANDARD_HOURS_PER_DAY)
+        for wd in remaining_wds:
+            wd_hours = emp_data.get(wd)
+            if wd_hours:
+                avg = sum(wd_hours) / len(wd_hours)
+                projection_extra += avg * hourly
+
+    return {
+        "extra": round(projection_extra, 2),
+        "data_points": total_data_points,
+        "lookback_days": 60,
+        "employees_with_data": len(per_emp_wd),
+    }
+
+
+def _signal_skill_weights(db, fallback_weights):
+    """Подбираем веса сигналов по их исторической точности.
+
+    Берём последние 30 закрытых snapshot'ов (где actual_accrued != None),
+    для каждого сигнала считаем MAPE = mean(|signal − actual| / actual).
+    Чем меньше MAPE — тем больший вес. Если данных меньше 3 — возвращаем
+    fallback_weights (распределение по времени месяца).
+
+    Возвращает (weights_dict, mape_dict, completed_count).
+    """
+    completed = (
+        db.query(models.ForecastSnapshot)
+        .filter(models.ForecastSnapshot.actual_accrued != None)  # noqa: E711
+        .order_by(models.ForecastSnapshot.created_at.desc())
+        .limit(30)
+        .all()
+    )
+
+    if len(completed) < 3:
+        return fallback_weights, {}, len(completed)
+
+    def signal_mape(getter):
+        errs = []
+        for s in completed:
+            v = getter(s)
+            if v is None or s.actual_accrued is None or s.actual_accrued <= 0:
+                continue
+            errs.append(abs(v - s.actual_accrued) / s.actual_accrued)
+        return (sum(errs) / len(errs)) if errs else None
+
+    pace_mape = signal_mape(lambda s: s.pace_value)
+    dow_mape = signal_mape(lambda s: s.dow_value)
+    history_mape = signal_mape(lambda s: s.history_value)
+
+    # Inverse-MAPE skill: чем меньше ошибка — тем выше вес
+    EPS = 0.01
+
+    def skill(m):
+        return (1 / (m + EPS)) if m is not None else 0
+
+    skills = {
+        "pace": skill(pace_mape),
+        "dow": skill(dow_mape),
+        "history": skill(history_mape),
+    }
+    total = sum(skills.values()) or 1.0
+    weights = {k: v / total for k, v in skills.items()}
+
+    mape_dict = {
+        "pace": round(pace_mape * 100, 2) if pace_mape is not None else None,
+        "dow": round(dow_mape * 100, 2) if dow_mape is not None else None,
+        "history": round(history_mape * 100, 2) if history_mape is not None else None,
+    }
+    return weights, mape_dict, len(completed)
+
+
+def _fill_unfilled_snapshots(db, payroll_cache):
+    """Для всех snapshot'ов завершившихся месяцев без actual — посчитать факт."""
+    today = datetime.now()
+    unfilled = (
+        db.query(models.ForecastSnapshot)
+        .filter(models.ForecastSnapshot.actual_accrued == None)  # noqa: E711
+        .all()
+    )
+    employees = None
+    for snap in unfilled:
+        try:
+            sy, sm = snap.month.split('-')
+            sy, sm = int(sy), int(sm)
+        except ValueError:
+            continue
+        if (sy, sm) >= (today.year, today.month):
+            continue  # текущий или будущий месяц — рано фиксировать факт
+        if employees is None:
+            employees = crud.get_employees(db, skip=0, limit=10000)
+        actual = 0.0
+        for emp in employees:
+            key = (emp.id, snap.month)
+            if key in payroll_cache:
+                p = payroll_cache[key]
+            else:
+                try:
+                    p = _compute_payroll(db, emp, snap.month)
+                except Exception:
+                    p = None
+                payroll_cache[key] = p
+            if p:
+                actual += (
+                    float(p.get("base_rate", 0) or 0)
+                    + float(p.get("piecework_sum", 0) or 0)
+                    + float(p.get("bonuses_total", 0) or 0)
+                )
+        if actual > 0:
+            snap.actual_accrued = round(actual, 2)
+    db.commit()
+
+
 @app.get("/api/dashboard/payroll-forecast")
 def dashboard_payroll_forecast(
     month: str = None,
     db: Session = Depends(database.get_db),
     _admin: models.User = Depends(auth.require_admin),
 ):
-    """Прогноз ФОТ: текущая сумма + линейная экстраполяция до конца месяца.
+    """Умный прогноз ФОТ: блендинг 3 сигналов с само-коррекцией по истории.
 
-    Логика: считаем «темп» = текущая_сумма / прошедшие_рабочие_дни,
-    прогноз = текущая_сумма + темп × оставшиеся_рабочие_дни.
-    Премии/авансы/штрафы прогнозом не дополняются — экстраполируем только
-    зарплатную часть (часы × ставка + сдельная)."""
+    Сигналы:
+      1. Pace — линейная экстраполяция текущего темпа на остаток месяца.
+      2. DOW  — для каждого сотрудника отдельно прогнозируем по его типичным
+                часам по дням недели за последние 60 дней.
+      3. History — средняя по 3 предыдущим завершённым месяцам.
+
+    Веса:
+      - Если есть ≥3 snapshot-ов с зафиксированным фактом, веса подбираются
+        по обратной MAPE каждого сигнала (более точные → больший вес).
+      - Иначе fallback: вес pace = elapsed/total, dow по доступности данных,
+        остаток на history.
+
+    Самокоррекция: каждый день для текущего месяца сохраняется ForecastSnapshot
+    с тремя сигналами и итогом. После завершения месяца факт заполняется и
+    учитывается в следующих расчётах весов.
+    """
     if not month:
         month = crud.get_current_month_str()
     [year, mn] = month.split('-')
@@ -1558,18 +1732,22 @@ def dashboard_payroll_forecast(
     is_current = (today.year == year and today.month == mn)
     day_today = today.day if is_current else last_day
 
-    # Считаем прошедшие/оставшиеся рабочие дни (без выходных)
+    # Прошедшие/оставшиеся рабочие дни
     elapsed_workdays = 0
     remaining_workdays = 0
     for d in range(1, last_day + 1):
         wd = datetime(year, mn, d).weekday()
-        if wd < 5:  # пн-пт
+        if wd < 5:
             if d <= day_today:
                 elapsed_workdays += 1
             else:
                 remaining_workdays += 1
+    total_workdays = elapsed_workdays + remaining_workdays
 
     employees = crud.get_employees(db, skip=0, limit=10000)
+    payroll_cache = {}  # (emp_id, month_str) -> dict — чтобы не дёргать _compute_payroll дважды
+
+    # ===== ТЕКУЩИЕ ДАННЫЕ ПО МЕСЯЦУ =====
     current_to_pay = 0.0
     current_base = 0.0
     current_bonuses = 0.0
@@ -1580,91 +1758,206 @@ def dashboard_payroll_forecast(
         try:
             p = _compute_payroll(db, emp, month)
         except Exception:
+            payroll_cache[(emp.id, month)] = None
             continue
+        payroll_cache[(emp.id, month)] = p
         current_to_pay += float(p.get("to_pay", 0) or 0)
         current_base += float(p.get("base_rate", 0) or 0)
         current_bonuses += float(p.get("bonuses_total", 0) or 0)
         current_advances += float(p.get("advances_total", 0) or 0)
         current_fines += float(p.get("fines_total", 0) or 0)
         current_piecework += float(p.get("piecework_sum", 0) or 0)
-
-    # Начислено — то, что заработали, без вычета авансов и штрафов.
-    # Это «ФОТ» в традиционном смысле и не «съедается» когда раздал зарплату авансами.
     current_accrued = current_base + current_piecework + current_bonuses
 
-    # Линейный прогноз (pace): масштабируем base + piecework по рабочим дням.
-    # Премии в темп не входят — они разовые, но входят в current_accrued как есть.
+    # ===== СИГНАЛ 1: PACE (линейная экстраполяция темпа) =====
     if elapsed_workdays > 0 and remaining_workdays > 0:
         rate_per_day = (current_base + current_piecework) / elapsed_workdays
         projected_extra = rate_per_day * remaining_workdays
     else:
         projected_extra = 0.0
     projected_to_pay = current_to_pay + projected_extra
-    projected_accrued = current_accrued + projected_extra
+    pace_accrued = current_accrued + projected_extra
 
-    # ===== УМНЫЙ ПРОГНОЗ: блендинг между текущим темпом и историей =====
-    # История = средний accrued за последние 3 ПОЛНЫХ месяца (только если они
-    # уже прошли). Это страхует от перекосов в начале месяца — если 1-го числа
-    # один человек случайно вышел на смену, наивный pace экстраполировал бы это
-    # на всех; история «помнит» что обычно ФОТ ~Х ₴.
+    # ===== СИГНАЛ 2: DOW — день-недели per-employee =====
+    dow_data = _compute_dow_projection(db, employees, year, mn, day_today, last_day)
+    dow_accrued = current_accrued + dow_data["extra"]
+
+    # ===== СИГНАЛ 3: HISTORY — последние 3 завершённых месяца =====
     HISTORY_MONTHS = 3
     history_samples = []
-    cur_y, cur_m = year, mn
     for i in range(1, HISTORY_MONTHS + 1):
-        hy, hm = cur_y, cur_m - i
+        hy, hm = year, mn - i
         while hm <= 0:
             hm += 12
             hy -= 1
-        # Не учитываем будущие месяцы (если is_current=False и пользователь смотрит прошлое)
-        hist_month_str = f"{hy}-{hm:02d}"
-        # Не берём текущий месяц или будущие в выборку истории
+        hist_str = f"{hy}-{hm:02d}"
         if (hy, hm) >= (today.year, today.month):
-            continue
+            continue  # пропускаем текущий и будущие
         sample_total = 0.0
         for emp in employees:
-            try:
-                p = _compute_payroll(db, emp, hist_month_str)
+            key = (emp.id, hist_str)
+            if key not in payroll_cache:
+                try:
+                    payroll_cache[key] = _compute_payroll(db, emp, hist_str)
+                except Exception:
+                    payroll_cache[key] = None
+            p = payroll_cache[key]
+            if p:
                 sample_total += (
                     float(p.get("base_rate", 0) or 0)
                     + float(p.get("piecework_sum", 0) or 0)
                     + float(p.get("bonuses_total", 0) or 0)
                 )
-            except Exception:
-                continue
         if sample_total > 0:
-            history_samples.append({"month": hist_month_str, "accrued": round(sample_total, 2)})
+            history_samples.append({"month": hist_str, "accrued": round(sample_total, 2)})
 
-    history_avg = (
-        sum(s["accrued"] for s in history_samples) / len(history_samples)
-        if history_samples else None
-    )
-
-    # Блендинг: чем больше дней месяца прошло, тем больше доверяем pace.
-    total_workdays = elapsed_workdays + remaining_workdays
-    if is_current and total_workdays > 0 and history_avg is not None:
-        weight_pace = elapsed_workdays / total_workdays
-        smart_value = (weight_pace * projected_accrued) + ((1 - weight_pace) * history_avg)
-        smart_forecast = {
-            "value": round(smart_value, 2),
-            "weight_pace": round(weight_pace, 3),
-            "weight_history": round(1 - weight_pace, 3),
-            "method": "blended",
-            "pace_value": round(projected_accrued, 2),
-            "history_value": round(history_avg, 2),
-        }
-    elif is_current:
-        # Истории ещё нет — fallback на чистый pace
-        smart_forecast = {
-            "value": round(projected_accrued, 2),
-            "weight_pace": 1.0,
-            "weight_history": 0.0,
-            "method": "pace_only",
-            "pace_value": round(projected_accrued, 2),
-            "history_value": None,
-        }
+    history_avg = (sum(s["accrued"] for s in history_samples) / len(history_samples)) if history_samples else None
+    # σ для доверительного интервала
+    if len(history_samples) >= 2:
+        vals = [s["accrued"] for s in history_samples]
+        mean = sum(vals) / len(vals)
+        history_sigma = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
     else:
-        # Прошлый месяц — прогнозить нечего, итог = current_accrued
-        smart_forecast = None
+        history_sigma = 0.0
+
+    # ===== БЛЕНДИНГ С САМОКОРРЕКЦИЕЙ =====
+    # Сначала пытаемся подобрать веса по исторической точности сигналов.
+    # Если данных мало — fallback на time-based + data-quality.
+
+    # Fallback weights (когда нет истории snapshot-ов)
+    pace_w_fallback = (elapsed_workdays / total_workdays) * 0.5 if total_workdays > 0 else 0
+    dow_data_quality = min(1.0, dow_data["data_points"] / 30) if dow_data["data_points"] else 0
+    dow_w_fallback = dow_data_quality * 0.4
+    history_w_fallback = max(0, 1 - pace_w_fallback - dow_w_fallback)
+
+    fallback_weights = {
+        "pace": pace_w_fallback,
+        "dow": dow_w_fallback,
+        "history": history_w_fallback,
+    }
+
+    skill_weights, signal_mapes, snapshot_count = _signal_skill_weights(db, fallback_weights)
+    using_skill_weights = snapshot_count >= 3
+
+    # Зануляем веса для сигналов, по которым нет данных в этом конкретном расчёте
+    weights = dict(skill_weights)
+    if dow_data["data_points"] == 0:
+        weights["dow"] = 0
+    if history_avg is None:
+        weights["history"] = 0
+    if elapsed_workdays == 0:
+        weights["pace"] = 0  # нечего экстраполировать
+    # Нормализуем
+    total_w = sum(weights.values())
+    if total_w > 0:
+        weights = {k: v / total_w for k, v in weights.items()}
+    else:
+        # Совсем ничего нет — отдаём текущему как «прогноз»
+        weights = {"pace": 1.0, "dow": 0.0, "history": 0.0}
+
+    # Edge case: последний день месяца — пусть pace доминирует (он = факту)
+    if remaining_workdays == 0:
+        weights = {"pace": 1.0, "dow": 0.0, "history": 0.0}
+
+    # Финальный прогноз
+    if is_current:
+        smart_value = (
+            weights["pace"] * pace_accrued
+            + weights["dow"] * dow_accrued
+            + weights["history"] * (history_avg if history_avg else current_accrued)
+        )
+    else:
+        # Прошлый месяц — нечего прогнозировать, факт = current_accrued
+        smart_value = current_accrued
+
+    smart_forecast = {
+        "value": round(smart_value, 2),
+        "method": "skill_weighted" if using_skill_weights else "fallback_blend",
+        "weights": {k: round(v, 3) for k, v in weights.items()},
+        "signals": {
+            "pace": round(pace_accrued, 2),
+            "dow": round(dow_accrued, 2) if dow_data["data_points"] > 0 else None,
+            "history": round(history_avg, 2) if history_avg else None,
+        },
+        "signal_mapes": signal_mapes,
+        "snapshots_learned_from": snapshot_count,
+        "dow_data_points": dow_data["data_points"],
+        "dow_lookback_days": dow_data["lookback_days"],
+    } if is_current else None
+
+    # ===== ДОВЕРИТЕЛЬНЫЙ ИНТЕРВАЛ =====
+    # σ берём как max(history_sigma, signal_disagreement). signal_disagreement = stdev
+    # доступных сигналов — если они между собой сильно расходятся, доверие меньше.
+    confidence = None
+    if is_current:
+        active_signals = [s for s in (pace_accrued, dow_accrued if dow_data["data_points"] else None,
+                                      history_avg) if s is not None]
+        if len(active_signals) >= 2:
+            mean_sig = sum(active_signals) / len(active_signals)
+            disagreement = (sum((v - mean_sig) ** 2 for v in active_signals) / len(active_signals)) ** 0.5
+        else:
+            disagreement = 0.0
+        sigma = max(history_sigma, disagreement)
+        confidence = {
+            "sigma": round(sigma, 2),
+            "low": round(smart_value - 1.5 * sigma, 2),
+            "high": round(smart_value + 1.5 * sigma, 2),
+            "from_history": round(history_sigma, 2),
+            "from_signal_disagreement": round(disagreement, 2),
+        }
+
+    # ===== СОХРАНЯЕМ SNAPSHOT (для самокоррекции в следующий раз) =====
+    if is_current:
+        today_str = today.strftime("%Y-%m-%d")
+        existing = (
+            db.query(models.ForecastSnapshot)
+            .filter(
+                models.ForecastSnapshot.month == month,
+                models.ForecastSnapshot.snapshot_date == today_str,
+            )
+            .first()
+        )
+        if existing:
+            existing.elapsed_workdays = elapsed_workdays
+            existing.pace_value = round(pace_accrued, 2)
+            existing.dow_value = round(dow_accrued, 2) if dow_data["data_points"] > 0 else None
+            existing.history_value = round(history_avg, 2) if history_avg else None
+            existing.blended_value = round(smart_value, 2)
+        else:
+            db.add(models.ForecastSnapshot(
+                month=month,
+                snapshot_date=today_str,
+                elapsed_workdays=elapsed_workdays,
+                pace_value=round(pace_accrued, 2),
+                dow_value=round(dow_accrued, 2) if dow_data["data_points"] > 0 else None,
+                history_value=round(history_avg, 2) if history_avg else None,
+                blended_value=round(smart_value, 2),
+            ))
+        db.commit()
+
+    # Дозаполняем actual для snapshot'ов уже завершённых месяцев
+    _fill_unfilled_snapshots(db, payroll_cache)
+
+    # ===== МЕТРИКА ТОЧНОСТИ ПРОГНОЗА (MAPE) =====
+    accuracy = None
+    closed_with_actual = (
+        db.query(models.ForecastSnapshot)
+        .filter(models.ForecastSnapshot.actual_accrued != None)  # noqa: E711
+        .order_by(models.ForecastSnapshot.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    if closed_with_actual:
+        # MAPE по итоговому blended-прогнозу
+        errs = []
+        for s in closed_with_actual:
+            if s.actual_accrued and s.actual_accrued > 0 and s.blended_value:
+                errs.append(abs(s.blended_value - s.actual_accrued) / s.actual_accrued)
+        if errs:
+            accuracy = {
+                "mape_pct": round((sum(errs) / len(errs)) * 100, 2),
+                "samples": len(errs),
+            }
 
     return {
         "month": month,
@@ -1681,14 +1974,17 @@ def dashboard_payroll_forecast(
             "fines": round(current_fines, 2),
         },
         "projected_to_pay": round(projected_to_pay, 2),
-        "projected_accrued": round(projected_accrued, 2),
+        "projected_accrued": round(pace_accrued, 2),  # ← legacy alias на pace
         "projected_extra": round(projected_extra, 2),
         "history": {
             "months_used": len(history_samples),
             "avg_accrued": round(history_avg, 2) if history_avg else 0.0,
+            "sigma": round(history_sigma, 2),
             "samples": history_samples,
         },
         "smart_forecast": smart_forecast,
+        "confidence": confidence,
+        "accuracy": accuracy,
     }
 
 

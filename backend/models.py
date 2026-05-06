@@ -100,6 +100,33 @@ class SalarySnapshot(Base):
     )
 
 
+class ForecastSnapshot(Base):
+    """Снимок прогноза ФОТ на конкретный день — для самокоррекции и метрик точности.
+
+    Раз в день бэкенд при запросе аналитики записывает текущий прогноз с разбивкой
+    по сигналам (темп / день-недели / история). Когда месяц завершается, запись
+    дополняется фактом — `actual_accrued`. По истории ошибок каждого сигнала
+    подбираются веса для будущих прогнозов: сигнал, который ошибался меньше,
+    получает больший вес.
+    """
+    __tablename__ = "forecast_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    month = Column(String, nullable=False, index=True)            # "YYYY-MM" — месяц прогноза
+    snapshot_date = Column(String, nullable=False, index=True)    # "YYYY-MM-DD" — день, когда прогноз снят
+    elapsed_workdays = Column(Integer, nullable=False, default=0)
+    pace_value = Column(Float, nullable=True)                     # сигнал: текущий темп
+    dow_value = Column(Float, nullable=True)                      # сигнал: day-of-week per-employee
+    history_value = Column(Float, nullable=True)                  # сигнал: средняя по прошлым месяцам
+    blended_value = Column(Float, nullable=False)                 # итоговый прогноз
+    actual_accrued = Column(Float, nullable=True)                 # фактический ФОТ (заполняется по итогу месяца)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('month', 'snapshot_date', name='_forecast_month_date_uc'),
+    )
+
+
 class MonthClosure(Base):
     """Закрытый (зафиксированный) расчётный месяц.
 
