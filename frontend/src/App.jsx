@@ -1,8 +1,9 @@
 // App.jsx - Главный компонент приложения
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { Menu } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import Sidebar from './components/Sidebar';
+import MobileBottomNav from './components/MobileBottomNav';
 import Dashboard from './pages/Dashboard';
 import Journal from './pages/Journal';
 import Employees from './pages/Employees';
@@ -13,6 +14,7 @@ import Login from './pages/Login';
 import NotificationManager from './components/NotificationManager';
 import ProtectedRoute from './components/ProtectedRoute';
 import { TodayAttendanceProvider } from './context/TodayAttendanceContext';
+import { useAuth } from './context/AuthContext';
 import { Toaster } from 'react-hot-toast';
 import CabinetLayout from './pages/cabinet/CabinetLayout';
 
@@ -26,26 +28,31 @@ const PAGE_TITLES = {
   '/logs': 'Логи',
 };
 
-// Мобильная шапка: бургер слева, название текущей страницы посередине.
+// Мобильная шапка: лого + название текущей страницы + кнопка выхода.
 // Видна только на мобильном (lg:hidden), занимает 56px и стикается к верху.
-const MobileTopBar = ({ onOpenSidebar }) => {
+// Бургера тут больше нет — навигация переехала в MobileBottomNav.
+const MobileTopBar = () => {
   const location = useLocation();
+  const { user, logout } = useAuth();
   const title = PAGE_TITLES[location.pathname] || 'Учёт ЗП';
   return (
-    <div className="lg:hidden sticky top-0 z-30 bg-white border-b border-slate-200 h-14 flex items-center px-3 gap-2">
-      <button
-        onClick={onOpenSidebar}
-        aria-label="Открыть меню"
-        className="p-2 -ml-2 text-slate-700 hover:bg-slate-100 rounded-md"
-      >
-        <Menu size={20} />
-      </button>
+    <div className="lg:hidden sticky top-0 z-20 bg-white border-b border-slate-200 h-14 flex items-center px-3 gap-2">
       <div className="flex items-center gap-2 min-w-0 flex-1">
         <div className="w-7 h-7 bg-slate-900 rounded-md flex items-center justify-center text-white font-bold text-[10px] flex-shrink-0">
           УЗ
         </div>
         <h1 className="text-sm font-semibold text-slate-900 truncate">{title}</h1>
       </div>
+      {user && (
+        <button
+          onClick={logout}
+          aria-label="Выйти"
+          title={`Выйти (${user.username})`}
+          className="p-2 -mr-2 text-slate-500 hover:bg-rose-50 hover:text-rose-600 rounded-md"
+        >
+          <LogOut size={18} />
+        </button>
+      )}
     </div>
   );
 };
@@ -53,7 +60,6 @@ const MobileTopBar = ({ onOpenSidebar }) => {
 // Layout админки — сайдбар + основной контент. Только для роли admin.
 function AdminLayout() {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   return (
     <TodayAttendanceProvider>
@@ -62,11 +68,9 @@ function AdminLayout() {
         <Sidebar
           isCollapsed={isCollapsed}
           setIsCollapsed={setIsCollapsed}
-          isMobileOpen={isMobileSidebarOpen}
-          setIsMobileOpen={setIsMobileSidebarOpen}
         />
-        <main className={`flex-1 min-w-0 transition-all duration-200 ${isCollapsed ? 'lg:ml-14' : 'lg:ml-56'}`}>
-          <MobileTopBar onOpenSidebar={() => setIsMobileSidebarOpen(true)} />
+        <main className={`flex-1 min-w-0 transition-all duration-200 ${isCollapsed ? 'lg:ml-14' : 'lg:ml-56'} pb-[60px] lg:pb-0`}>
+          <MobileTopBar />
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/journal" element={<Journal />} />
@@ -77,6 +81,7 @@ function AdminLayout() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
+        <MobileBottomNav />
       </div>
     </TodayAttendanceProvider>
   );
