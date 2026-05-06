@@ -130,8 +130,9 @@ export const calculatePayroll = async (employeeId, month) => {
 
 // ========== АНАЛИТИКА DASHBOARD ==========
 
-export const getDashboardHeatmap = async (days = 30) => {
-  const response = await api.get(`/api/dashboard/heatmap?days=${days}`);
+export const getDashboardHeatmap = async (month = null) => {
+  const params = month ? `?month=${month}` : '';
+  const response = await api.get(`/api/dashboard/heatmap${params}`);
   return response.data;
 };
 

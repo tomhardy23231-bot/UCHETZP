@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Journal from './pages/Journal';
 import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
+import Analytics from './pages/Analytics';
 import Logs from './pages/Logs';
 import Login from './pages/Login';
 import NotificationManager from './components/NotificationManager';
@@ -29,6 +30,7 @@ function AdminLayout() {
             <Route path="/journal" element={<Journal />} />
             <Route path="/employees" element={<Employees />} />
             <Route path="/payroll" element={<Payroll />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

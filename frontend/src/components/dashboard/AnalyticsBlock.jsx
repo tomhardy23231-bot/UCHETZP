@@ -25,7 +25,10 @@ const formatMonth = (m) => {
 const WEEKDAYS_RU = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const WEEKDAYS_RU_LONG = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 
-const AnalyticsBlock = () => {
+// `selectedMonth` (YYYY-MM) — общий селектор сверху страницы. Применяется
+// к heatmap, top-employees и forecast. Trend chart показывает последние
+// 6 месяцев независимо от выбранного.
+const AnalyticsBlock = ({ selectedMonth }) => {
   const [heatmap, setHeatmap] = useState(null);
   const [trend, setTrend] = useState(null);
   const [tops, setTops] = useState(null);
@@ -33,19 +36,19 @@ const AnalyticsBlock = () => {
   const [loading, setLoading] = useState(true);
 
   // Модалки drilldown
-  const [trendModal, setTrendModal] = useState(null);   // { month, breakdown }
-  const [topModal, setTopModal] = useState(null);       // { criterion: 'hours'|'points'|'bonuses', list }
-  const [heatModal, setHeatModal] = useState(null);     // { weekday, hour, count }
+  const [trendModal, setTrendModal] = useState(null);
+  const [topModal, setTopModal] = useState(null);
+  const [heatModal, setHeatModal] = useState(null);
   const [forecastModal, setForecastModal] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      getDashboardHeatmap(30).catch(() => null),
+      getDashboardHeatmap(selectedMonth).catch(() => null),
       getDashboardPayrollTrend(6).catch(() => null),
-      getDashboardTopEmployees().catch(() => null),
-      getDashboardPayrollForecast().catch(() => null),
+      getDashboardTopEmployees(selectedMonth).catch(() => null),
+      getDashboardPayrollForecast(selectedMonth).catch(() => null),
     ]).then(([h, t, top, f]) => {
       if (cancelled) return;
       setHeatmap(h);
@@ -55,7 +58,7 @@ const AnalyticsBlock = () => {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [selectedMonth]);
 
   if (loading) {
     return (
@@ -196,18 +199,21 @@ const PayrollTrendCard = ({ data, onSelectMonth }) => {
     return <div className="bg-white border border-slate-200 rounded-lg p-4">Нет данных</div>;
   }
   const months = data.months;
-  const max = Math.max(1, ...months.map((m) => m.to_pay_total));
+  // Используем «начислено» (accrued = base + piecework + bonuses), а не to_pay,
+  // чтобы выплата авансами не «съедала» столбец до нуля.
+  const max = Math.max(1, ...months.map((m) => m.accrued_total ?? 0));
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4 h-full">
       <div className="flex items-center gap-2 mb-3">
         <BarChart3 size={15} className="text-slate-400" />
-        <h3 className="text-sm font-semibold text-slate-900">ФОТ · последние 6 месяцев</h3>
+        <h3 className="text-sm font-semibold text-slate-900">Начислено · последние 6 месяцев</h3>
         <span className="text-xs text-slate-400 ml-1">кликни столбец — детали</span>
       </div>
       <div className="flex items-end gap-2 h-32">
         {months.map((m) => {
-          const h = (m.to_pay_total / max) * 100;
+          const v = m.accrued_total ?? 0;
+          const h = (v / max) * 100;
           const isLast = m === months[months.length - 1];
           return (
             <button
@@ -215,10 +221,10 @@ const PayrollTrendCard = ({ data, onSelectMonth }) => {
               type="button"
               onClick={() => onSelectMonth(m)}
               className="flex-1 group flex flex-col justify-end h-full"
-              title={`${formatMonth(m.month)}: ${formatMoney(m.to_pay_total)} ₴`}
+              title={`${formatMonth(m.month)}: ${formatMoney(v)} ₴ начислено`}
             >
               <div className="text-[10px] text-slate-500 font-mono mb-0.5 text-center tabular-nums">
-                {formatMoney(m.to_pay_total / 1000)}к
+                {v > 0 ? `${formatMoney(v / 1000)}к` : '—'}
               </div>
               <div
                 className={`rounded-t transition-all relative ${
@@ -239,20 +245,30 @@ const PayrollTrendCard = ({ data, onSelectMonth }) => {
           );
         })}
       </div>
+      <p className="mt-2 text-[10px] text-slate-400 leading-snug">
+        Начислено = часовая часть + сдельная + премии. Авансы и штрафы не вычитаются — столбец показывает «сколько заработано».
+      </p>
     </div>
   );
 };
 
 const TrendBreakdownModal = ({ monthData, onClose }) => {
-  const total = monthData.to_pay_total;
   return (
-    <ModalShell title={`ФОТ · ${formatMonth(monthData.month)}`} onClose={onClose} icon={BarChart3}>
+    <ModalShell title={`Начислено · ${formatMonth(monthData.month)}`} onClose={onClose} icon={BarChart3}>
       <div className="p-5 space-y-3">
-        <div className="flex items-end justify-between bg-slate-50 border border-slate-200 rounded-md p-3">
-          <span className="text-xs uppercase tracking-wider text-slate-500 font-medium">Итого</span>
-          <span className="text-2xl font-bold tabular-nums text-slate-900">
-            {formatMoney(total)} <span className="text-sm text-slate-400">₴</span>
-          </span>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-md p-3">
+            <div className="text-[10px] uppercase tracking-wider text-emerald-700 font-medium mb-1">Начислено</div>
+            <div className="text-xl font-bold tabular-nums text-emerald-900">
+              {formatMoney(monthData.accrued_total ?? 0)} <span className="text-xs text-emerald-700/70">₴</span>
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-1">К выплате (за вычетом авансов/штрафов)</div>
+            <div className="text-xl font-bold tabular-nums text-slate-900">
+              {formatMoney(monthData.to_pay_total ?? 0)} <span className="text-xs text-slate-500">₴</span>
+            </div>
+          </div>
         </div>
         {monthData.is_closed && (
           <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-800">
@@ -270,8 +286,13 @@ const TrendBreakdownModal = ({ monthData, onClose }) => {
                     {formatHours(b.hours)} · {b.points.toFixed(0)} оч.
                   </div>
                 </div>
-                <div className="text-sm font-mono font-semibold text-slate-900 tabular-nums">
-                  {formatMoney(b.to_pay)} ₴
+                <div className="text-right">
+                  <div className="text-sm font-mono font-semibold text-emerald-700 tabular-nums">
+                    {formatMoney(b.accrued ?? 0)} ₴
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400 tabular-nums">
+                    к выплате {formatMoney(b.to_pay)}
+                  </div>
                 </div>
               </li>
             ))}
@@ -292,10 +313,9 @@ const HeatmapCard = ({ data, onCellClick }) => {
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
+      <div className="flex items-center gap-2 mb-1 flex-wrap">
         <FlameKindling size={15} className="text-amber-500" />
-        <h3 className="text-sm font-semibold text-slate-900">Тепло-карта приходов</h3>
-        <span className="text-xs text-slate-400 ml-1">за последние {data.days} дней · всего {data.total_scans}</span>
+        <h3 className="text-sm font-semibold text-slate-900">Тепло-карта приходов · <span className="capitalize">{formatMonth(data.month)}</span></h3>
         <div className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-500">
           <span>меньше</span>
           <div className="flex gap-0.5">
@@ -306,6 +326,10 @@ const HeatmapCard = ({ data, onCellClick }) => {
           <span>больше</span>
         </div>
       </div>
+      <p className="text-xs text-slate-500 mb-3">
+        В каких часах люди приходят на работу. Учитываются только <span className="font-medium text-slate-700">отметки прихода</span>{' '}
+        (in_time) — уходы не считаются. Всего за месяц: <span className="font-mono font-semibold text-slate-700">{data.total_scans}</span>.
+      </p>
 
       <div className="overflow-x-auto">
         <table className="text-[10px] font-mono w-full">

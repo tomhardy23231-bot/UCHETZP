@@ -1405,23 +1405,27 @@ def adjust_points(
 
 @app.get("/api/dashboard/heatmap")
 def dashboard_heatmap(
-    days: int = 30,
+    month: str = None,  # YYYY-MM, по умолчанию — текущий месяц
     db: Session = Depends(database.get_db),
     _admin: models.User = Depends(auth.require_admin),
 ):
-    """Heat-map: количество приходов по (день недели × час).
-
-    Возвращает матрицу 7×24 + список самых активных слотов с примерами.
+    """Heat-map: количество **приходов** (только in_time) по (день недели × час)
+    за указанный месяц. Уходы не считаются — это отметки начала смены.
     """
-    from datetime import timedelta as _td
-    end = datetime.now()
-    start = end - _td(days=max(1, min(days, 365)))
+    if not month:
+        month = crud.get_current_month_str()
+    [year, mn] = month.split('-')
+    year, mn = int(year), int(mn)
+    last_day = calendar.monthrange(year, mn)[1]
+    start = datetime(year, mn, 1, 0, 0, 0)
+    end = datetime(year, mn, last_day, 23, 59, 59)
+
     records = db.query(models.Attendance).filter(
         models.Attendance.in_time >= start,
         models.Attendance.in_time <= end,
     ).all()
 
-    # weekday: 0=Mon..6=Sun (Python convention) — оставим как есть
+    # weekday: 0=Mon..6=Sun
     matrix = [[0 for _ in range(24)] for _ in range(7)]
     total = 0
     for r in records:
@@ -1433,9 +1437,9 @@ def dashboard_heatmap(
         total += 1
 
     return {
-        "days": days,
-        "total_scans": total,
-        "matrix": matrix,  # rows = weekdays Mon..Sun, cols = hours 0..23
+        "month": month,
+        "total_scans": total,  # это число приходов за месяц (не приходов+уходов)
+        "matrix": matrix,
     }
 
 
@@ -1460,25 +1464,35 @@ def dashboard_payroll_trend(
             m += 12
             y -= 1
         month_str = f"{y}-{m:02d}"
-        total = 0.0
+        to_pay_total = 0.0
+        accrued_total = 0.0  # начислено: base + piecework + bonuses (без штрафов/авансов)
         breakdown = []
         for emp in employees:
             try:
                 p = _compute_payroll(db, emp, month_str)
             except Exception:
                 continue
-            total += float(p.get("to_pay", 0) or 0)
+            to_pay = float(p.get("to_pay", 0) or 0)
+            accrued = (
+                float(p.get("base_rate", 0) or 0)
+                + float(p.get("piecework_sum", 0) or 0)
+                + float(p.get("bonuses_total", 0) or 0)
+            )
+            to_pay_total += to_pay
+            accrued_total += accrued
             breakdown.append({
                 "employee_id": emp.id,
                 "employee_name": emp.name,
-                "to_pay": round(float(p.get("to_pay", 0) or 0), 2),
+                "to_pay": round(to_pay, 2),
+                "accrued": round(accrued, 2),
                 "hours": float(p.get("total_hours_worked", 0) or 0),
                 "points": float(p.get("total_points", 0) or 0),
             })
-        breakdown.sort(key=lambda x: x["to_pay"], reverse=True)
+        breakdown.sort(key=lambda x: x["accrued"], reverse=True)
         out.append({
             "month": month_str,
-            "to_pay_total": round(total, 2),
+            "to_pay_total": round(to_pay_total, 2),
+            "accrued_total": round(accrued_total, 2),
             "is_closed": crud.is_month_closed(db, month_str),
             "breakdown": breakdown,
         })

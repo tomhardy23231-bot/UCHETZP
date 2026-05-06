@@ -7,7 +7,6 @@ import {
 import { useTodayAttendance } from '../context/TodayAttendanceContext';
 import { getAttendanceJournal } from '../api/client';
 import Avatar from '../components/ui/Avatar';
-import AnalyticsBlock from '../components/dashboard/AnalyticsBlock';
 
 const LATE_THRESHOLD_HOUR = 9;
 const LATE_THRESHOLD_MIN = 0;
@@ -116,9 +115,6 @@ const Dashboard = () => {
           );
         })}
       </div>
-
-      {/* Analytics: forecast / payroll trend / heatmap / top employees */}
-      <AnalyticsBlock />
 
       {/* Top late */}
       {topLate.length > 0 && (

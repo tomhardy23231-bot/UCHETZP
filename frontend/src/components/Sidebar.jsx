@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Menu, X, LayoutDashboard, BookUser, Users, Calculator,
-  ScrollText, ChevronLeft, ChevronRight, LogOut,
+  ScrollText, ChevronLeft, ChevronRight, LogOut, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,11 +14,12 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
   const { user, logout } = useAuth();
 
   const menuItems = [
-    { path: '/',          icon: LayoutDashboard, label: 'Дашборд' },
-    { path: '/journal',   icon: BookUser,        label: 'Журнал' },
-    { path: '/employees', icon: Users,           label: 'Сотрудники' },
-    { path: '/payroll',   icon: Calculator,      label: 'Зарплата' },
-    { path: '/logs',      icon: ScrollText,      label: 'Логи' },
+    { path: '/',           icon: LayoutDashboard, label: 'Дашборд' },
+    { path: '/journal',    icon: BookUser,        label: 'Журнал' },
+    { path: '/employees',  icon: Users,           label: 'Сотрудники' },
+    { path: '/payroll',    icon: Calculator,      label: 'Зарплата' },
+    { path: '/analytics',  icon: BarChart3,       label: 'Аналитика' },
+    { path: '/logs',       icon: ScrollText,      label: 'Логи' },
   ];
 
   const isActive = (path) => location.pathname === path;
