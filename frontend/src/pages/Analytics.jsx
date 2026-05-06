@@ -29,17 +29,17 @@ const Analytics = () => {
   };
 
   return (
-    <div className="min-h-screen px-6 md:px-8 py-6">
-      <div className="mb-6 flex items-end justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
+      <div className="mb-5 md:mb-6 flex items-end justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Аналитика</h1>
-            <p className="text-sm text-slate-500 mt-0.5">
+            <h1 className="text-xl md:text-2xl font-semibold text-slate-900 tracking-tight">Аналитика</h1>
+            <p className="text-xs md:text-sm text-slate-500 mt-0.5">
               Прогноз ФОТ, тепло-карта приходов, топы и тренды
             </p>
           </div>
 
-          <div className="flex items-center bg-white border border-slate-200 rounded-md h-9 ml-2">
+          <div className="flex items-center bg-white border border-slate-200 rounded-md h-9 md:ml-2">
             <button
               onClick={handlePrevMonth}
               className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-l-md transition-colors"
@@ -60,7 +60,7 @@ const Analytics = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+        <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 font-medium">
           <BarChart3 size={14} className="text-slate-400" />
           Все данные за выбранный месяц
         </div>

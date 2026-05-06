@@ -21,7 +21,10 @@ const Employees = () => {
   const [showModal, setShowModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState('table');
+  // На мобильном дефолт — карточки (таблица всё равно не влезет)
+  const [viewMode, setViewMode] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'grid' : 'table'
+  );
 
   const [name, setName] = useState('');
   const [position, setPosition] = useState('');
@@ -216,12 +219,12 @@ const Employees = () => {
   );
 
   return (
-    <div className="min-h-screen px-6 md:px-8 py-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
       {/* Header */}
-      <div className="mb-5 flex items-end justify-between gap-3 flex-wrap">
+      <div className="mb-4 md:mb-5 flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Сотрудники</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{employees.length} человек в системе</p>
+          <h1 className="text-xl md:text-2xl font-semibold text-slate-900 tracking-tight">Сотрудники</h1>
+          <p className="text-xs md:text-sm text-slate-500 mt-0.5">{employees.length} человек в системе</p>
         </div>
         <Button variant="primary" icon={UserPlus} onClick={openAddModal}>
           Добавить
@@ -260,7 +263,7 @@ const Employees = () => {
 
       {/* Table view */}
       {viewMode === 'table' && (
-        <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
           {loading ? (
             <div className="p-12 text-center">
               <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-200 border-t-slate-900 mx-auto mb-3"></div>
@@ -273,7 +276,7 @@ const Employees = () => {
               <p className="text-xs text-slate-500 mt-0.5">Добавьте первого</p>
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[760px]">
               <thead>
                 <tr className="text-xs text-slate-500 uppercase tracking-wider bg-slate-50/60">
                   <th className="text-left font-medium px-4 py-2">Сотрудник</th>

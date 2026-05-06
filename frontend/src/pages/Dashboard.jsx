@@ -108,18 +108,18 @@ const Dashboard = () => {
   }, [attendance]);
 
   return (
-    <div className="min-h-screen px-6 md:px-8 py-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
       {/* Header */}
-      <div className="mb-6 flex items-end justify-between gap-4 flex-wrap">
+      <div className="mb-5 md:mb-6 flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Дашборд</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <h1 className="text-xl md:text-2xl font-semibold text-slate-900 tracking-tight">Дашборд</h1>
+          <p className="text-xs md:text-sm text-slate-500 mt-0.5">
             {new Date().toLocaleDateString('ru-RU', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             })}
           </p>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+        <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
           Обновляется в реальном времени
         </div>
@@ -189,15 +189,15 @@ const Dashboard = () => {
                   </button>
 
                   {isOpen && (
-                    <div className="bg-slate-50/60 border-t border-slate-100">
-                      <table className="w-full text-xs">
+                    <div className="bg-slate-50/60 border-t border-slate-100 overflow-x-auto">
+                      <table className="w-full text-xs min-w-[480px]">
                         <thead>
                           <tr className="text-[10px] text-slate-400 uppercase tracking-wider">
-                            <th className="text-left font-medium px-4 py-2 pl-[3.25rem]">Когда</th>
+                            <th className="text-left font-medium px-3 py-2 pl-3 md:pl-[3.25rem]">Когда</th>
                             <th className="text-left font-medium px-2 py-2">Пришёл</th>
                             <th className="text-left font-medium px-2 py-2">Опоздал</th>
                             <th className="text-left font-medium px-2 py-2">Ушёл</th>
-                            <th className="text-left font-medium px-4 py-2">Отработал</th>
+                            <th className="text-left font-medium px-3 py-2">Отработал</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -206,19 +206,19 @@ const Dashboard = () => {
                             const lateM = inc.minutesLate % 60;
                             return (
                               <tr key={i} className="border-t border-slate-100">
-                                <td className="px-4 py-2 pl-[3.25rem] text-slate-700 capitalize">
+                                <td className="px-3 py-2 pl-3 md:pl-[3.25rem] text-slate-700 capitalize whitespace-nowrap">
                                   {formatLateDate(inc.date)}
                                 </td>
-                                <td className="px-2 py-2 text-slate-700 font-mono">
+                                <td className="px-2 py-2 text-slate-700 font-mono whitespace-nowrap">
                                   {inc.inTime}
                                 </td>
-                                <td className="px-2 py-2 font-mono text-rose-600">
+                                <td className="px-2 py-2 font-mono text-rose-600 whitespace-nowrap">
                                   +{lateH > 0 ? `${lateH}ч ` : ''}{lateM}м
                                 </td>
-                                <td className="px-2 py-2 text-slate-700 font-mono">
+                                <td className="px-2 py-2 text-slate-700 font-mono whitespace-nowrap">
                                   {inc.outTime || <span className="text-slate-300">—</span>}
                                 </td>
-                                <td className="px-4 py-2 text-slate-700">
+                                <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
                                   {inc.totalHours != null ? formatHoursDecimal(inc.totalHours) : <span className="text-slate-400">не закрыта</span>}
                                 </td>
                               </tr>
@@ -248,61 +248,107 @@ const Dashboard = () => {
             <p className="text-sm text-slate-500">Ещё никто не отметился</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-slate-500 uppercase tracking-wider bg-slate-50/60">
-                <th className="text-left font-medium px-4 py-2">Сотрудник</th>
-                <th className="text-left font-medium px-4 py-2">Приход</th>
-                <th className="text-left font-medium px-4 py-2">Уход</th>
-                <th className="text-left font-medium px-4 py-2">Длительность</th>
-                <th className="text-left font-medium px-4 py-2">Статус</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
+          <>
+            {/* Desktop table */}
+            <table className="w-full text-sm hidden md:table">
+              <thead>
+                <tr className="text-xs text-slate-500 uppercase tracking-wider bg-slate-50/60">
+                  <th className="text-left font-medium px-4 py-2">Сотрудник</th>
+                  <th className="text-left font-medium px-4 py-2">Приход</th>
+                  <th className="text-left font-medium px-4 py-2">Уход</th>
+                  <th className="text-left font-medium px-4 py-2">Длительность</th>
+                  <th className="text-left font-medium px-4 py-2">Статус</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {attendance.map((record) => {
+                  const unclosed = !record.out_time && now.getHours() >= UNCLOSED_SHIFT_ALERT_HOUR;
+                  return (
+                    <tr key={record.id} className={unclosed ? 'bg-rose-50/40' : 'hover:bg-slate-50/60'}>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <Avatar name={record.employee_name} size="sm" />
+                          <span className={`font-medium ${unclosed ? 'text-rose-700' : 'text-slate-900'}`}>
+                            {record.employee_name}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600 font-mono">
+                        {formatTime(record.in_time)}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600 font-mono">
+                        {record.out_time ? formatTime(record.out_time) : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600">
+                        {calculateDuration(record.in_time, record.out_time) || (
+                          <span className="text-slate-400">в процессе</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {unclosed ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-rose-100 text-rose-700 border border-rose-200">
+                            <AlertTriangle size={11} /> не закрыта
+                          </span>
+                        ) : !record.out_time ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200">
+                            <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                            на работе
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                            ушёл
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Mobile cards */}
+            <div className="md:hidden divide-y divide-slate-100">
               {attendance.map((record) => {
                 const unclosed = !record.out_time && now.getHours() >= UNCLOSED_SHIFT_ALERT_HOUR;
+                const dur = calculateDuration(record.in_time, record.out_time);
                 return (
-                  <tr key={record.id} className={unclosed ? 'bg-rose-50/40' : 'hover:bg-slate-50/60'}>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2.5">
-                        <Avatar name={record.employee_name} size="sm" />
-                        <span className={`font-medium ${unclosed ? 'text-rose-700' : 'text-slate-900'}`}>
-                          {record.employee_name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-600 font-mono">
-                      {formatTime(record.in_time)}
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-600 font-mono">
-                      {record.out_time ? formatTime(record.out_time) : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-600">
-                      {calculateDuration(record.in_time, record.out_time) || (
-                        <span className="text-slate-400">в процессе</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5">
+                  <div key={record.id} className={`px-4 py-3 ${unclosed ? 'bg-rose-50/40' : ''}`}>
+                    <div className="flex items-center gap-2.5 mb-2">
+                      <Avatar name={record.employee_name} size="sm" />
+                      <span className={`font-medium text-sm flex-1 truncate ${unclosed ? 'text-rose-700' : 'text-slate-900'}`}>
+                        {record.employee_name}
+                      </span>
                       {unclosed ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-rose-100 text-rose-700 border border-rose-200">
-                          <AlertTriangle size={11} /> не закрыта
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-100 text-rose-700 border border-rose-200">
+                          <AlertTriangle size={10} /> не закрыта
                         </span>
                       ) : !record.out_time ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-700 border border-emerald-200">
                           <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
                           на работе
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
                           ушёл
                         </span>
                       )}
-                    </td>
-                  </tr>
+                    </div>
+                    <div className="flex items-center gap-3 pl-9 text-xs text-slate-600">
+                      <span className="font-mono">
+                        <span className="text-slate-400">пришёл</span> {formatTime(record.in_time)}
+                      </span>
+                      <span className="font-mono">
+                        <span className="text-slate-400">ушёл</span> {record.out_time ? formatTime(record.out_time) : <span className="text-slate-300">—</span>}
+                      </span>
+                      {dur && (
+                        <span className="ml-auto font-medium text-slate-700">{dur}</span>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          </>
         )}
       </div>
     </div>

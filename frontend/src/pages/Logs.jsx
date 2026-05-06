@@ -89,12 +89,12 @@ const Logs = () => {
   const [section, setSection] = useState('scans'); // scans | cabinet
 
   return (
-    <div className="min-h-screen px-6 md:px-8 py-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
       {/* Header */}
-      <div className="mb-5 flex items-end justify-between gap-3 flex-wrap">
+      <div className="mb-4 md:mb-5 flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Логи</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <h1 className="text-xl md:text-2xl font-semibold text-slate-900 tracking-tight">Логи</h1>
+          <p className="text-xs md:text-sm text-slate-500 mt-0.5">
             {section === 'scans'
               ? 'Каждая попытка отметки на сканере: что приняли и почему'
               : 'Кто и когда заходил в личный кабинет, что смотрел'}

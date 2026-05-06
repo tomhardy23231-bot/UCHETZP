@@ -322,13 +322,13 @@ const Journal = () => {
   }
 
   return (
-    <div className="min-h-screen px-6 md:px-8 py-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
       {/* Header */}
-      <div className="mb-5 flex items-end justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-4">
+      <div className="mb-4 md:mb-5 flex items-end justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 md:gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Журнал</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Посещаемость по дням</p>
+            <h1 className="text-xl md:text-2xl font-semibold text-slate-900 tracking-tight">Журнал</h1>
+            <p className="text-xs md:text-sm text-slate-500 mt-0.5">Посещаемость по дням</p>
           </div>
 
           {/* Month selector */}
@@ -336,7 +336,7 @@ const Journal = () => {
             <button onClick={handlePrevMonth} className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-l-md transition-colors">
               <ChevronLeft size={16} />
             </button>
-            <span className="px-3 text-sm font-medium text-slate-900 capitalize min-w-[140px] text-center">
+            <span className="px-3 text-sm font-medium text-slate-900 capitalize min-w-[120px] sm:min-w-[140px] text-center">
               {new Date(selectedMonth).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
             </span>
             <button onClick={handleNextMonth} className="px-2 h-full text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-r-md transition-colors">
@@ -352,14 +352,14 @@ const Journal = () => {
             className={`flex items-center gap-1.5 px-2.5 h-8 rounded text-xs font-medium transition-colors ${viewMode === 'grid' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
           >
             <LayoutGrid size={14} />
-            Карточки
+            <span className="hidden xs:inline">Карточки</span>
           </button>
           <button
             onClick={() => setViewMode('table')}
             className={`flex items-center gap-1.5 px-2.5 h-8 rounded text-xs font-medium transition-colors ${viewMode === 'table' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
           >
             <List size={14} />
-            Таблица
+            <span className="hidden xs:inline">Таблица</span>
           </button>
         </div>
       </div>

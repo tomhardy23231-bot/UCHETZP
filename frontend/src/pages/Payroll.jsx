@@ -553,23 +553,23 @@ const Payroll = () => {
   // ==================== VIEW 1: MASTER LIST ====================
   if (!selectedEmployee) {
     return (
-      <div className="min-h-screen px-6 md:px-8 py-6">
+      <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
         {/* Header */}
-        <div className="mb-5 flex items-end justify-between gap-3 flex-wrap">
+        <div className="mb-4 md:mb-5 flex items-end justify-between gap-3 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Зарплата</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Расчёт за {formatMonth(selectedMonth)}</p>
+            <h1 className="text-xl md:text-2xl font-semibold text-slate-900 tracking-tight">Зарплата</h1>
+            <p className="text-xs md:text-sm text-slate-500 mt-0.5 capitalize">Расчёт за {formatMonth(selectedMonth)}</p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
+          <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
+            <div className="relative flex-1 md:flex-none min-w-0">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 placeholder="Поиск..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-9 pl-8 pr-3 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-56"
+                className="h-9 pl-8 pr-3 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-full md:w-56"
               />
             </div>
             {monthSelector}
@@ -681,16 +681,16 @@ const Payroll = () => {
   const editLocked = isCurrentMonthClosed || payrollData?.is_closed === true;
 
   return (
-    <div className="min-h-screen px-6 md:px-8 py-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
       {/* Header */}
-      <div className="flex items-end justify-between gap-3 flex-wrap mb-5">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4 md:mb-5">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0">
           <Button variant="secondary" size="sm" icon={ArrowLeft} onClick={backToList}>Назад</Button>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 md:gap-2.5 min-w-0 flex-1">
             <Avatar name={selectedEmployee.name} size="md" />
-            <div>
-              <h1 className="text-xl font-semibold text-slate-900">{selectedEmployee.name}</h1>
-              <p className="text-xs text-slate-500">{selectedEmployee.position}</p>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base md:text-xl font-semibold text-slate-900 truncate">{selectedEmployee.name}</h1>
+              <p className="text-[11px] md:text-xs text-slate-500 truncate">{selectedEmployee.position}</p>
             </div>
           </div>
         </div>
