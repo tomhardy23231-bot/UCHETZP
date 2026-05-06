@@ -103,7 +103,16 @@ const Payroll = () => {
   const printRef = useRef(null);
   const handlePrint = useReactToPrint({
     contentRef: printRef,
-    documentTitle: `Payslip - ${selectedEmployee?.name} - ${formatMonth(selectedMonth)}`,
+    documentTitle: `Расчётный лист — ${selectedEmployee?.name} — ${formatMonth(selectedMonth)}`,
+    // Печатаем ровно A4 без полей браузера (компонент сам делает внутренние отступы),
+    // и принудительно сохраняем цвета (для тёмной плашки «К выплате»).
+    pageStyle: `
+      @page { size: A4; margin: 0; }
+      @media print {
+        html, body { margin: 0 !important; padding: 0 !important; }
+        body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      }
+    `,
   });
 
   // Экспорт расчётного листа одного сотрудника
