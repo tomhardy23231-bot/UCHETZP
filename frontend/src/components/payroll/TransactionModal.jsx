@@ -118,7 +118,7 @@ const TransactionModal = ({
         {cfg.fields.includes('points') && (
           <div>
             <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
-              Очки *
+              Баллы *
             </label>
             <input
               type="number" step="0.01" required

@@ -267,7 +267,7 @@ const CabinetHome = () => {
           <StatCard
             icon={<Target size={18} />}
             color="indigo"
-            label="Очков"
+            label="Баллов"
             value={animPoints.toFixed(1)}
             unit=""
           />

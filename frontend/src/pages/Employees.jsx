@@ -285,7 +285,7 @@ const Employees = () => {
                   <th className="text-left font-medium px-4 py-2">Карта</th>
                   <th className="text-left font-medium px-4 py-2">Кабинет</th>
                   <th className="text-right font-medium px-4 py-2">Ставка</th>
-                  <th className="text-right font-medium px-4 py-2">Очко</th>
+                  <th className="text-right font-medium px-4 py-2">Балл</th>
                   <th className="w-24"></th>
                 </tr>
               </thead>
@@ -365,7 +365,7 @@ const Employees = () => {
                   <div className="font-mono text-slate-700">{emp.rate.toFixed(0)} ₴</div>
                 </div>
                 <div>
-                  <div className="text-slate-400">Очко</div>
+                  <div className="text-slate-400">Балл</div>
                   <div className="font-mono text-slate-700">{emp.point_val.toFixed(2)} ₴</div>
                 </div>
               </div>
@@ -464,7 +464,7 @@ const Employees = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">Цена очка (грн)</label>
+            <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">Цена балла (грн)</label>
             <input
               type="number" step="0.01" min="0"
               value={pointVal} onChange={(e) => setPointVal(e.target.value)}

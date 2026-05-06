@@ -18,7 +18,7 @@ const TRANSACTION_TYPES = {
   bonus:   { label: 'Премия',  icon: TrendingUp,    color: 'emerald', sign: '+' },
   advance: { label: 'Аванс',   icon: Wallet,        color: 'amber',   sign: '−' },
   fine:    { label: 'Штраф',   icon: AlertTriangle, color: 'rose',    sign: '−' },
-  points:  { label: 'Очки',    icon: Target,        color: 'indigo',  sign: '+' },
+  points:  { label: 'Баллы',    icon: Target,        color: 'indigo',  sign: '+' },
 };
 
 const CabinetPayroll = () => {
@@ -125,12 +125,12 @@ const CabinetPayroll = () => {
             </div>
           </div>
 
-          {/* Сдельная (очки) */}
+          {/* Сдельная (баллы) */}
           {payroll.total_points > 0 && (
             <div className="bg-white rounded-2xl p-4 shadow-soft border border-slate-100">
               <div className="flex items-center gap-2 mb-3">
                 <Target size={16} className="text-indigo-500" />
-                <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Сдельная (очки)</p>
+                <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Сдельная (баллы)</p>
               </div>
               <div className="flex items-center justify-between bg-indigo-50 rounded-xl px-4 py-3">
                 <div>
@@ -173,7 +173,7 @@ const CabinetPayroll = () => {
             </div>
             <div className="space-y-2 text-sm">
               <BreakdownRow label="По часам" value={`+${formatMoney(payroll.base_rate)}`} />
-              {payroll.piecework_sum > 0 && <BreakdownRow label="Очки" value={`+${formatMoney(payroll.piecework_sum)}`} />}
+              {payroll.piecework_sum > 0 && <BreakdownRow label="Баллы" value={`+${formatMoney(payroll.piecework_sum)}`} />}
               {payroll.bonuses_total > 0 && <BreakdownRow label="Премии" value={`+${formatMoney(payroll.bonuses_total)}`} positive />}
               {payroll.advances_total > 0 && <BreakdownRow label="Авансы" value={`−${formatMoney(payroll.advances_total)}`} negative />}
               {payroll.fines_total > 0 && <BreakdownRow label="Штрафы" value={`−${formatMoney(payroll.fines_total)}`} negative />}
@@ -209,7 +209,7 @@ const CabinetPayroll = () => {
                         <p className="text-sm font-bold text-slate-800 truncate">
                           {cfg.label}
                           {t.type === 'points' && t.points_count != null && (
-                            <span className="font-medium text-slate-400 ml-1">{t.points_count} оч.</span>
+                            <span className="font-medium text-slate-400 ml-1">{t.points_count} балл.</span>
                           )}
                         </p>
                         {t.comment && <p className="text-xs text-slate-500 truncate">{t.comment}</p>}

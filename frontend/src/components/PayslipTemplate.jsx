@@ -79,9 +79,9 @@ const PayslipTemplate = React.forwardRef(({ employee, payrollData, transactions 
                     <p className="text-xs text-blue-600">@{payrollData.hourly_rate?.toFixed(2) || '0.00'} ₴/час</p>
                 </div>
                 <div className="bg-purple-100 p-4 rounded-lg text-center shadow-sm">
-                    <p className="text-sm text-purple-700">Набрано очков</p>
+                    <p className="text-sm text-purple-700">Набрано баллов</p>
                     <p className="text-3xl font-bold text-purple-800">{payrollData.total_points?.toFixed(0) || '0'} pts</p>
-                    <p className="text-xs text-purple-600">@{payrollData.point_rate_used?.toFixed(2) || '0.00'} ₴/очко</p>
+                    <p className="text-xs text-purple-600">@{payrollData.point_rate_used?.toFixed(2) || '0.00'} ₴/балл</p>
                 </div>
                 <div className="bg-emerald-100 p-4 rounded-lg text-center shadow-sm">
                     <p className="text-sm text-emerald-700">Месячная ставка</p>

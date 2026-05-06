@@ -11,7 +11,7 @@ class TransactionType(enum.Enum):
     BONUS = "bonus"       # Премия
     ADVANCE = "advance"   # Аванс
     FINE = "fine"         # Штраф
-    POINTS = "points"     # Сдельная работа (очки)
+    POINTS = "points"     # Сдельная работа (баллы)
 
 
 class UserRole(enum.Enum):
@@ -31,7 +31,7 @@ class Employee(Base):
     phone = Column(String)  # Телефон
     bank_acc = Column(String(16))  # Номер счёта (16 цифр)
     rate = Column(Float, default=0.0)  # Базовая ставка (грн/мес)
-    point_val = Column(Float, default=0.0)  # Стоимость одного очка (грн)
+    point_val = Column(Float, default=0.0)  # Стоимость одного балла (грн)
 
     # Связи с другими таблицами
     attendance_records = relationship("Attendance", back_populates="employee", cascade="all, delete-orphan")
@@ -72,7 +72,7 @@ class FinancialTransaction(Base):
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     type = Column(Enum(TransactionType), nullable=False)  # Тип транзакции
     amount = Column(Float, nullable=False)  # Сумма в гривнах
-    points_count = Column(Float, nullable=True)  # Количество очков (для сдельной работы)
+    points_count = Column(Float, nullable=True)  # Количество баллов (для сдельной работы)
     comment = Column(String, nullable=True)  # Комментарий/описание (опционально)
     created_at = Column(DateTime(timezone=True), server_default=func.now())  # Дата создания
     date = Column(String, nullable=False, index=True)  # Дата в формате YYYY-MM-DD для группировки
@@ -89,7 +89,7 @@ class SalarySnapshot(Base):
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     month = Column(String, nullable=False, index=True)  # Формат "YYYY-MM"
     salary_rate = Column(Float, nullable=False)  # Ставка за месяц (грн)
-    point_rate = Column(Float, nullable=False)  # Стоимость одного очка (грн)
+    point_rate = Column(Float, nullable=False)  # Стоимость одного балла (грн)
 
     # Связь с сотрудником
     employee = relationship("Employee", back_populates="salary_snapshots")
@@ -131,7 +131,7 @@ class MonthClosure(Base):
     """Закрытый (зафиксированный) расчётный месяц.
 
     Когда админ закрывает месяц — добавляется одна строка с месяцем "YYYY-MM".
-    После этого транзакции этого месяца и корректировки часов/очков блокируются
+    После этого транзакции этого месяца и корректировки часов/баллов блокируются
     на бэкенде, чтобы цифры за уже выплаченную зарплату нельзя было поменять
     задним числом. Снятие закрытия = удаление строки.
     """

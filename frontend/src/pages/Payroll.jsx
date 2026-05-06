@@ -63,7 +63,7 @@ const Payroll = () => {
     return () => clearTimeout(t);
   }, [ratesRevealed]);
 
-  // Состояния для модалок корректировки часов/очков
+  // Состояния для модалок корректировки часов/баллов
   const [targetHours, setTargetHours] = useState('');
   const [targetPoints, setTargetPoints] = useState('');
 
@@ -117,8 +117,8 @@ const Payroll = () => {
       ['Часов отработано', payrollData.total_hours_worked?.toFixed(2)],
       ['Часовая ставка (грн)', payrollData.hourly_rate?.toFixed(2)],
       ['Базовая зарплата (грн)', payrollData.base_rate?.toFixed(2)],
-      ['Очков', payrollData.total_points?.toFixed(2)],
-      ['Цена очка (грн)', selectedEmployee.point_val?.toFixed(2)],
+      ['Баллов', payrollData.total_points?.toFixed(2)],
+      ['Цена балла (грн)', selectedEmployee.point_val?.toFixed(2)],
       ['Сдельная (грн)', payrollData.piecework_sum?.toFixed(2)],
       ['Премии (грн)', payrollData.bonuses_total?.toFixed(2)],
       ['Авансы (грн)', payrollData.advances_total?.toFixed(2)],
@@ -142,7 +142,7 @@ const Payroll = () => {
       );
       const headers = [
         'ФИО', 'Должность', 'Часов', 'Часовая ставка (грн)',
-        'База (грн)', 'Очков', 'Сдельная (грн)',
+        'База (грн)', 'Баллов', 'Сдельная (грн)',
         'Премии (грн)', 'Авансы (грн)', 'Штрафы (грн)',
         'К ВЫПЛАТЕ (грн)', 'Номер счёта',
       ];
@@ -454,13 +454,13 @@ const Payroll = () => {
   ), [showHoursModal, targetHours, payrollData, closeAllModals, handleAdjustHours]);
 
   const AdjustPointsModal = useMemo(() => (
-    <Modal open={showAdjustPointsModal} onClose={closeAllModals} title="Корректировка очков" icon={Target}>
+    <Modal open={showAdjustPointsModal} onClose={closeAllModals} title="Корректировка баллов" icon={Target}>
       <form onSubmit={handleAdjustPoints} className="p-5 space-y-4">
         <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-md text-sm text-slate-600">
-          Текущее: <span className="font-mono font-semibold text-slate-900">{payrollData?.total_points?.toFixed(2) || '0.00'}</span> очков
+          Текущее: <span className="font-mono font-semibold text-slate-900">{payrollData?.total_points?.toFixed(2) || '0.00'}</span> баллов
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">Целевые очки *</label>
+          <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">Целевые баллы *</label>
           <input type="number" step="0.01" min="0" required value={targetPoints} onChange={(e) => setTargetPoints(e.target.value)} className="w-full h-9 px-3 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="1000.00" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
@@ -520,7 +520,7 @@ const Payroll = () => {
         <ul className="text-xs text-slate-600 space-y-1 list-disc pl-5">
           <li>Ставки сотрудников на этот месяц замораживаются (изменение в карточке не повлияет на прошлый расчёт)</li>
           <li>Нельзя добавлять, удалять или править премии/авансы/штрафы/сдельную</li>
-          <li>Нельзя пересчитать часы и очки</li>
+          <li>Нельзя пересчитать часы и баллы</li>
         </ul>
         <p className="text-xs text-slate-500">
           В любой момент можно снять закрытие кнопкой «Открыть».
@@ -851,7 +851,7 @@ const Payroll = () => {
               <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between text-xs text-slate-500">
                 <div className="flex gap-4 font-mono">
                   <span>ставка <span className="text-slate-700 font-semibold">{selectedEmployee.rate.toFixed(0)}</span></span>
-                  <span>очко <span className="text-slate-700 font-semibold">{selectedEmployee.point_val.toFixed(2)}</span></span>
+                  <span>балл <span className="text-slate-700 font-semibold">{selectedEmployee.point_val.toFixed(2)}</span></span>
                 </div>
                 <span className="text-slate-300 font-mono">id {selectedEmployee.id}</span>
               </div>

@@ -472,7 +472,7 @@ const TrendBreakdownModal = ({ monthData, onClose }) => {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-slate-900 truncate">{b.employee_name}</div>
                   <div className="text-[11px] text-slate-500 font-mono">
-                    {formatHours(b.hours)} · {b.points.toFixed(0)} оч.
+                    {formatHours(b.hours)} · {b.points.toFixed(0)} балл.
                   </div>
                 </div>
                 <div className="text-right">
@@ -607,7 +607,7 @@ const TopEmployeesCard = ({ data, onOpen }) => {
   if (!data) return null;
   const cards = [
     { key: 'hours',   label: 'По часам',       icon: Clock,      color: 'blue',    list: data.by_hours,   valueFmt: (e) => formatHours(e.hours) },
-    { key: 'points',  label: 'По очкам',       icon: Target,     color: 'indigo',  list: data.by_points,  valueFmt: (e) => `${e.points.toFixed(0)} оч.` },
+    { key: 'points',  label: 'По баллам',       icon: Target,     color: 'indigo',  list: data.by_points,  valueFmt: (e) => `${e.points.toFixed(0)} балл.` },
     { key: 'bonuses', label: 'По премиям',     icon: TrendingUp, color: 'emerald', list: data.by_bonuses, valueFmt: (e) => `+${formatMoney(e.bonuses)} ₴` },
   ];
   return (
@@ -674,7 +674,7 @@ const TopEmployeesCard = ({ data, onOpen }) => {
 const TopEmployeesModal = ({ data, criterion, onClose }) => {
   const config = {
     hours:   { title: 'Топ по часам',   list: data.by_hours,   valueFmt: (e) => formatHours(e.hours), icon: Clock },
-    points:  { title: 'Топ по очкам',   list: data.by_points,  valueFmt: (e) => `${e.points.toFixed(0)} оч.`, icon: Target },
+    points:  { title: 'Топ по баллам',   list: data.by_points,  valueFmt: (e) => `${e.points.toFixed(0)} балл.`, icon: Target },
     bonuses: { title: 'Топ по премиям', list: data.by_bonuses, valueFmt: (e) => `+${formatMoney(e.bonuses)} ₴`, icon: TrendingUp },
   }[criterion];
   if (!config) return null;

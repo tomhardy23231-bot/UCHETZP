@@ -14,7 +14,7 @@ class EmployeeBase(BaseModel):
     phone: Optional[str] = Field(None, description="Номер телефона")
     bank_acc: Optional[str] = Field(None, pattern=r"^\d{16}$", description="Номер счёта (16 цифр)")
     rate: float = Field(0.0, ge=0, description="Базовая ставка (грн/мес)")
-    point_val: float = Field(0.0, ge=0, description="Стоимость очка (грн)")
+    point_val: float = Field(0.0, ge=0, description="Стоимость балла (грн)")
     card_id: Optional[str] = Field(None, description="Номер карты доступа")
 
 
@@ -85,7 +85,7 @@ class FinancialTransactionBase(BaseModel):
     employee_id: int
     type: TransactionType
     amount: float = Field(default=0.0, description="Сумма в гривнах")
-    points_count: Optional[float] = Field(None, description="Количество очков")
+    points_count: Optional[float] = Field(None, description="Количество баллов")
     comment: Optional[str] = Field(None, description="Комментарий")
     date: str  # Формат: YYYY-MM-DD
 

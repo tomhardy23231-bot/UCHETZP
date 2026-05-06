@@ -433,7 +433,7 @@ def get_my_transactions(
     current_user: models.User = Depends(auth.require_employee),
     db: Session = Depends(database.get_db),
 ):
-    """Финансовые транзакции (премии/авансы/штрафы/очки) текущего сотрудника."""
+    """Финансовые транзакции (премии/авансы/штрафы/баллы) текущего сотрудника."""
     employee = _resolve_my_employee(current_user, db)
     _log_cabinet_event(db, request, "view_transactions", user=current_user)
     if month:
@@ -1133,7 +1133,7 @@ def create_transaction(
         if transaction.points_count is None or transaction.points_count <= 0:
             raise HTTPException(
                 status_code=400,
-                detail="Для сдельной работы необходимо указать количество очков"
+                detail="Для сдельной работы необходимо указать количество баллов"
             )
         # Вычисляем сумму автоматически
         calculated_amount = transaction.points_count * employee.point_val
@@ -1209,7 +1209,7 @@ class AdjustHoursRequest(BaseModel):
 
 
 class AdjustPointsRequest(BaseModel):
-    """Запрос на корректировку очков."""
+    """Запрос на корректировку баллов."""
     employee_id: int
     month: str  # Формат: YYYY-MM
     target_points: float
@@ -1352,7 +1352,7 @@ def adjust_points(
     _admin: models.User = Depends(auth.require_admin),
 ):
     """
-    Корректировка очков сотрудника за месяц.
+    Корректировка баллов сотрудника за месяц.
 
     Создаёт транзакцию типа POINTS с разницей.
     """
@@ -1362,7 +1362,7 @@ def adjust_points(
 
     _ensure_month_open(db, request.month)
 
-    # Получаем текущие очки за месяц
+    # Получаем текущие баллы за месяц
     transactions = crud.get_transactions_by_employee_and_month(
         db, request.employee_id, request.month
     )
@@ -1394,7 +1394,7 @@ def adjust_points(
     crud.create_transaction(db=db, transaction=transaction_data)
 
     return {
-        "message": f"Очки скорректированы на {diff_points:.2f}",
+        "message": f"Баллы скорректированы на {diff_points:.2f}",
         "previous_points": round(current_points, 2),
         "new_points": round(request.target_points, 2),
         "adjusted_points": round(diff_points, 2)
@@ -1506,7 +1506,7 @@ def dashboard_top_employees(
     db: Session = Depends(database.get_db),
     _admin: models.User = Depends(auth.require_admin),
 ):
-    """Топы сотрудников за месяц: по часам, по очкам, по премиям, по штрафам.
+    """Топы сотрудников за месяц: по часам, по баллам, по премиям, по штрафам.
     Возвращает по каждому критерию полный отсортированный список."""
     if not month:
         month = crud.get_current_month_str()
@@ -2014,7 +2014,7 @@ def close_payroll_month(
 
     После закрытия запрещается:
       - создавать/удалять транзакции с датой этого месяца
-      - корректировать часы или очки за этот месяц
+      - корректировать часы или баллы за этот месяц
 
     Идемпотентно: повторный вызов вернёт существующую запись.
     """
