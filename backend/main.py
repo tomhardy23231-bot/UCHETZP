@@ -1592,7 +1592,8 @@ def dashboard_payroll_forecast(
     # Это «ФОТ» в традиционном смысле и не «съедается» когда раздал зарплату авансами.
     current_accrued = current_base + current_piecework + current_bonuses
 
-    # Прогноз: масштабируем base + piecework по прошедшим/оставшимся рабочим дням
+    # Линейный прогноз (pace): масштабируем base + piecework по рабочим дням.
+    # Премии в темп не входят — они разовые, но входят в current_accrued как есть.
     if elapsed_workdays > 0 and remaining_workdays > 0:
         rate_per_day = (current_base + current_piecework) / elapsed_workdays
         projected_extra = rate_per_day * remaining_workdays
@@ -1600,6 +1601,70 @@ def dashboard_payroll_forecast(
         projected_extra = 0.0
     projected_to_pay = current_to_pay + projected_extra
     projected_accrued = current_accrued + projected_extra
+
+    # ===== УМНЫЙ ПРОГНОЗ: блендинг между текущим темпом и историей =====
+    # История = средний accrued за последние 3 ПОЛНЫХ месяца (только если они
+    # уже прошли). Это страхует от перекосов в начале месяца — если 1-го числа
+    # один человек случайно вышел на смену, наивный pace экстраполировал бы это
+    # на всех; история «помнит» что обычно ФОТ ~Х ₴.
+    HISTORY_MONTHS = 3
+    history_samples = []
+    cur_y, cur_m = year, mn
+    for i in range(1, HISTORY_MONTHS + 1):
+        hy, hm = cur_y, cur_m - i
+        while hm <= 0:
+            hm += 12
+            hy -= 1
+        # Не учитываем будущие месяцы (если is_current=False и пользователь смотрит прошлое)
+        hist_month_str = f"{hy}-{hm:02d}"
+        # Не берём текущий месяц или будущие в выборку истории
+        if (hy, hm) >= (today.year, today.month):
+            continue
+        sample_total = 0.0
+        for emp in employees:
+            try:
+                p = _compute_payroll(db, emp, hist_month_str)
+                sample_total += (
+                    float(p.get("base_rate", 0) or 0)
+                    + float(p.get("piecework_sum", 0) or 0)
+                    + float(p.get("bonuses_total", 0) or 0)
+                )
+            except Exception:
+                continue
+        if sample_total > 0:
+            history_samples.append({"month": hist_month_str, "accrued": round(sample_total, 2)})
+
+    history_avg = (
+        sum(s["accrued"] for s in history_samples) / len(history_samples)
+        if history_samples else None
+    )
+
+    # Блендинг: чем больше дней месяца прошло, тем больше доверяем pace.
+    total_workdays = elapsed_workdays + remaining_workdays
+    if is_current and total_workdays > 0 and history_avg is not None:
+        weight_pace = elapsed_workdays / total_workdays
+        smart_value = (weight_pace * projected_accrued) + ((1 - weight_pace) * history_avg)
+        smart_forecast = {
+            "value": round(smart_value, 2),
+            "weight_pace": round(weight_pace, 3),
+            "weight_history": round(1 - weight_pace, 3),
+            "method": "blended",
+            "pace_value": round(projected_accrued, 2),
+            "history_value": round(history_avg, 2),
+        }
+    elif is_current:
+        # Истории ещё нет — fallback на чистый pace
+        smart_forecast = {
+            "value": round(projected_accrued, 2),
+            "weight_pace": 1.0,
+            "weight_history": 0.0,
+            "method": "pace_only",
+            "pace_value": round(projected_accrued, 2),
+            "history_value": None,
+        }
+    else:
+        # Прошлый месяц — прогнозить нечего, итог = current_accrued
+        smart_forecast = None
 
     return {
         "month": month,
@@ -1618,6 +1683,12 @@ def dashboard_payroll_forecast(
         "projected_to_pay": round(projected_to_pay, 2),
         "projected_accrued": round(projected_accrued, 2),
         "projected_extra": round(projected_extra, 2),
+        "history": {
+            "months_used": len(history_samples),
+            "avg_accrued": round(history_avg, 2) if history_avg else 0.0,
+            "samples": history_samples,
+        },
+        "smart_forecast": smart_forecast,
     }
 
 

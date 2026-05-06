@@ -113,12 +113,17 @@ const ForecastTile = ({ data, onClick }) => {
   const {
     current, projected_accrued, projected_extra,
     elapsed_workdays, remaining_workdays, is_current_month,
+    smart_forecast, history,
   } = data;
   const accruedNow = current.accrued ?? 0;
-  // Для прошлых/будущих месяцев projected_accrued == accruedNow (нет экстраполяции).
-  const headline = is_current_month ? projected_accrued : accruedNow;
+  // Для прошлых/будущих месяцев показываем итог как есть (smart_forecast = null)
+  // Для текущего — приоритет smart_forecast.value (блендинг pace + history)
+  const headline = is_current_month
+    ? (smart_forecast?.value ?? projected_accrued)
+    : accruedNow;
   const total = elapsed_workdays + remaining_workdays;
   const pct = total > 0 ? Math.round((elapsed_workdays / total) * 100) : 100;
+  const usingHistory = is_current_month && smart_forecast?.method === 'blended';
 
   return (
     <button
@@ -138,19 +143,27 @@ const ForecastTile = ({ data, onClick }) => {
         </div>
         <div className="text-[11px] text-slate-400 mt-1 leading-snug">
           {is_current_month ? (
-            <>
-              уже начислено <span className="text-white font-semibold">{formatMoney(accruedNow)} ₴</span>
-              {' '}за <span className="text-white font-semibold">{elapsed_workdays}</span> раб. дн.{' '}
-              · средний темп <span className="text-white font-semibold">
-                {elapsed_workdays > 0 ? formatMoney(accruedNow / elapsed_workdays) : 0} ₴/день
-              </span>
-              {remaining_workdays > 0 && (
-                <>
-                  {' '}× <span className="text-white font-semibold">{remaining_workdays}</span> оставшихся
-                  {' '}≈ <span className="text-white font-semibold">+{formatMoney(projected_extra)} ₴</span>
-                </>
-              )}
-            </>
+            usingHistory ? (
+              <>
+                уже начислено <span className="text-white font-semibold">{formatMoney(accruedNow)} ₴</span>{' '}
+                · блендинг текущего темпа <span className="text-white font-semibold">{Math.round(smart_forecast.weight_pace * 100)}%</span>
+                {' '}и средней по {history.months_used}{' '}
+                {history.months_used === 1 ? 'месяцу' : history.months_used < 5 ? 'месяцам' : 'месяцам'}
+                {' '}<span className="text-white font-semibold">{Math.round(smart_forecast.weight_history * 100)}%</span>
+              </>
+            ) : (
+              <>
+                уже начислено <span className="text-white font-semibold">{formatMoney(accruedNow)} ₴</span>
+                {' '}за <span className="text-white font-semibold">{elapsed_workdays}</span> раб. дн.
+                {remaining_workdays > 0 && (
+                  <>
+                    {' '}· темп × <span className="text-white font-semibold">{remaining_workdays}</span> оставшихся
+                    {' '}≈ <span className="text-white font-semibold">+{formatMoney(projected_extra)} ₴</span>
+                  </>
+                )}
+                <span className="text-amber-300/80"> (без истории — мало данных)</span>
+              </>
+            )
           ) : (
             <>часовая часть + сдельная + премии · итог за <span className="capitalize">{formatMonth(data.month)}</span></>
           )}
@@ -181,9 +194,16 @@ const ForecastModal = ({ data, onClose }) => {
   const {
     current, projected_to_pay, projected_accrued, projected_extra,
     elapsed_workdays, remaining_workdays, is_current_month, month,
+    smart_forecast, history,
   } = data;
   const accruedNow = current.accrued ?? (current.base_rate + current.piecework + current.bonuses);
   const ratePerDay = elapsed_workdays > 0 ? (current.base_rate + current.piecework) / elapsed_workdays : 0;
+  const finalForecast = is_current_month ? (smart_forecast?.value ?? projected_accrued) : accruedNow;
+  const usingHistory = is_current_month && smart_forecast?.method === 'blended';
+  const maxSample = history?.samples?.length
+    ? Math.max(...history.samples.map((s) => s.accrued), finalForecast)
+    : finalForecast;
+
   return (
     <ModalShell title={`${is_current_month ? 'Прогноз ФОТ' : 'ФОТ'} · ${formatMonth(month)}`} onClose={onClose} icon={Activity}>
       <div className="p-5 space-y-4">
@@ -191,12 +211,66 @@ const ForecastModal = ({ data, onClose }) => {
           <Stat label="Уже начислено" value={`${formatMoney(accruedNow)} ₴`} mono />
           <Stat
             label={is_current_month ? 'Прогноз ФОТ к концу месяца' : 'Итог ФОТ'}
-            value={`${formatMoney(projected_accrued ?? accruedNow)} ₴`}
+            value={`${formatMoney(finalForecast)} ₴`}
             mono accent="text-emerald-600"
           />
           <Stat label="Прошло рабочих дней" value={elapsed_workdays} />
           <Stat label="Осталось рабочих дней" value={remaining_workdays} />
         </div>
+
+        {/* Историческая динамика — мини-бар-чарт */}
+        {is_current_month && history?.samples?.length > 0 && (
+          <div className="bg-white border border-slate-200 rounded-md p-3">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
+              История · последние {history.months_used}{' '}
+              {history.months_used === 1 ? 'месяц' : history.months_used < 5 ? 'месяца' : 'месяцев'}
+            </p>
+            <div className="space-y-1.5">
+              {history.samples.slice().reverse().map((s) => {
+                const w = (s.accrued / maxSample) * 100;
+                return (
+                  <div key={s.month} className="flex items-center gap-2 text-xs">
+                    <span className="capitalize text-slate-500 w-20 flex-shrink-0">
+                      {new Date(s.month + '-02').toLocaleDateString('ru-RU', { month: 'short', year: '2-digit' })}
+                    </span>
+                    <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
+                      <div className="h-full bg-slate-300" style={{ width: `${w}%` }} />
+                    </div>
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums w-20 text-right flex-shrink-0">
+                      {formatMoney(s.accrued)} ₴
+                    </span>
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-2 text-xs pt-2 border-t border-slate-100">
+                <span className="text-slate-700 font-medium w-20 flex-shrink-0">Среднее</span>
+                <div className="flex-1 h-4 bg-blue-50 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-blue-300"
+                    style={{ width: `${(history.avg_accrued / maxSample) * 100}%` }}
+                  />
+                </div>
+                <span className="font-mono font-bold text-blue-700 tabular-nums w-20 text-right flex-shrink-0">
+                  {formatMoney(history.avg_accrued)} ₴
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-emerald-700 font-semibold w-20 flex-shrink-0 capitalize">
+                  {new Date(month + '-02').toLocaleDateString('ru-RU', { month: 'short', year: '2-digit' })}
+                </span>
+                <div className="flex-1 h-4 bg-emerald-50 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-400"
+                    style={{ width: `${(finalForecast / maxSample) * 100}%` }}
+                  />
+                </div>
+                <span className="font-mono font-bold text-emerald-700 tabular-nums w-20 text-right flex-shrink-0">
+                  {formatMoney(finalForecast)} ₴
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Структура за месяц</p>
@@ -212,25 +286,54 @@ const ForecastModal = ({ data, onClose }) => {
           {is_current_month && (
             <>
               <div className="my-1.5 border-t border-slate-200" />
-              <Row label="Прогноз доначисления" value={`+${formatMoney(projected_extra)} ₴`} positive />
-              <Row label="Итого ФОТ к концу месяца" value={`${formatMoney(projected_accrued ?? 0)} ₴`} bold />
+              <Row label="Прогноз доначисления (по темпу)" value={`+${formatMoney(projected_extra)} ₴`} positive />
+              <Row label="Прогноз итога (только по темпу)" value={`${formatMoney(projected_accrued ?? 0)} ₴`} />
+              {usingHistory && (
+                <Row label="Итог с поправкой на историю" value={`${formatMoney(finalForecast)} ₴`} bold />
+              )}
             </>
           )}
         </div>
 
         {is_current_month && (
-          <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-1.5">
-            <p className="text-xs font-medium text-blue-900 uppercase tracking-wider">Откуда прогноз</p>
-            <p className="text-[11px] text-blue-900 leading-relaxed font-mono">
-              <span className="font-semibold">{formatMoney(current.base_rate + current.piecework)} ₴</span>{' '}
-              (часы + сдельная) ÷ <span className="font-semibold">{elapsed_workdays}</span> прошедших раб. дн.{' '}
-              = <span className="font-semibold">{formatMoney(ratePerDay)} ₴/день</span>{' '}
-              × <span className="font-semibold">{remaining_workdays}</span> оставшихся
-              {' '}≈ <span className="font-semibold">+{formatMoney(projected_extra)} ₴</span>
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-2">
+            <p className="text-xs font-medium text-blue-900 uppercase tracking-wider">Как считается прогноз</p>
+            <p className="text-[11px] text-blue-900 leading-relaxed">
+              <span className="font-semibold">1) По текущему темпу:</span>{' '}
+              <span className="font-mono">
+                {formatMoney(current.base_rate + current.piecework)} ÷ {elapsed_workdays}
+                {' '}= {formatMoney(ratePerDay)} ₴/день × {remaining_workdays}
+                {' '}≈ +{formatMoney(projected_extra)} ₴
+              </span>
+              <br />
+              ⇒ итог по темпу <span className="font-semibold font-mono">{formatMoney(projected_accrued)} ₴</span>
             </p>
-            <p className="text-[10px] text-blue-800/80 leading-relaxed">
-              Экстраполируется только то, что зависит от темпа работы (часы и сдельная). Премии, авансы и штрафы — это разовые события, их добавлять «в среднем» нельзя, поэтому в прогноз они входят как есть, без масштабирования.
-            </p>
+            {usingHistory ? (
+              <>
+                <p className="text-[11px] text-blue-900 leading-relaxed">
+                  <span className="font-semibold">2) По истории:</span>{' '}
+                  средний ФОТ за {history.months_used}{' '}
+                  {history.months_used === 1 ? 'предыдущий месяц' : 'предыдущих месяца'}{' '}
+                  = <span className="font-semibold font-mono">{formatMoney(history.avg_accrued)} ₴</span>
+                </p>
+                <p className="text-[11px] text-blue-900 leading-relaxed">
+                  <span className="font-semibold">3) Итог:</span>{' '}
+                  блендинг по тому, сколько месяца прошло{' '}
+                  <span className="font-mono">
+                    ({Math.round(smart_forecast.weight_pace * 100)}% темп ·{' '}
+                    {Math.round(smart_forecast.weight_history * 100)}% история){' '}
+                    = {formatMoney(finalForecast)} ₴
+                  </span>
+                </p>
+                <p className="text-[10px] text-blue-800/80 leading-relaxed pt-1 border-t border-blue-200">
+                  Чем больше дней месяца прошло — тем больше доверия к темпу. В начале месяца история перевешивает (один странный день не должен ломать прогноз). К концу месяца — почти полностью верим темпу.
+                </p>
+              </>
+            ) : (
+              <p className="text-[10px] text-amber-800 leading-relaxed pt-1 border-t border-blue-200">
+                Истории пока нет (нет полных прошлых месяцев с данными), поэтому прогноз чисто по текущему темпу. По мере накопления месяцев точность будет расти.
+              </p>
+            )}
           </div>
         )}
       </div>
