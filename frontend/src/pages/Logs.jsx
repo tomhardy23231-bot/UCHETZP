@@ -185,9 +185,9 @@ const ScanLogsView = () => {
   }, [logs, searchQuery, todayOnly]);
 
   const handleClear = async () => {
-    if (!confirm('Удалить логи старше 30 дней?')) return;
+    if (!confirm('Удалить ВСЕ логи сканирований? Это действие нельзя отменить.')) return;
     try {
-      const res = await clearScanLogs(30);
+      const res = await clearScanLogs();
       toast.success(`Удалено записей: ${res.deleted}`);
       loadLogs(activeTab);
     } catch (e) {
@@ -224,7 +224,7 @@ const ScanLogsView = () => {
           Обновить
         </Button>
         <Button variant="secondary" size="sm" icon={Trash2} onClick={handleClear}>
-          Очистить старые
+          Очистить всё
         </Button>
       </div>
 
@@ -351,9 +351,9 @@ const CabinetActivityView = () => {
   }, [items, searchQuery, todayOnly]);
 
   const handleClear = async () => {
-    if (!confirm('Удалить лог активности кабинетов старше 30 дней?')) return;
+    if (!confirm('Удалить ВЕСЬ лог активности кабинетов? Это действие нельзя отменить.')) return;
     try {
-      const res = await clearCabinetActivity(30);
+      const res = await clearCabinetActivity();
       toast.success(`Удалено: ${res.deleted}`);
       load();
     } catch (e) {
@@ -381,7 +381,7 @@ const CabinetActivityView = () => {
           Обновить
         </Button>
         <Button variant="secondary" size="sm" icon={Trash2} onClick={handleClear}>
-          Очистить старые
+          Очистить всё
         </Button>
       </div>
 
