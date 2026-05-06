@@ -1616,12 +1616,17 @@ def dashboard_payroll_forecast(
 
 # ========== ЗАКРЫТИЕ РАСЧЁТНОГО МЕСЯЦА ==========
 
-@app.get("/api/payroll/closed-months", response_model=List[schemas.MonthClosure])
+@app.get("/api/payroll/months/closed", response_model=List[schemas.MonthClosure])
 def list_closed_months(
     db: Session = Depends(database.get_db),
     _admin: models.User = Depends(auth.require_admin),
 ):
-    """Список всех закрытых (зафиксированных) расчётных месяцев."""
+    """Список всех закрытых (зафиксированных) расчётных месяцев.
+
+    Путь именно `/months/closed`, а не `/closed-months`, чтобы не конфликтовал
+    с `/api/payroll/{employee_id}` (FastAPI пытался бы привести "closed-months"
+    к int и возвращал 422).
+    """
     return crud.get_closed_months(db)
 
 

@@ -156,7 +156,7 @@ export const getDashboardPayrollForecast = async (month = null) => {
 // ========== ЗАКРЫТИЕ МЕСЯЦА ==========
 
 export const getClosedMonths = async () => {
-  const response = await api.get('/api/payroll/closed-months');
+  const response = await api.get('/api/payroll/months/closed');
   return response.data;
 };
 
