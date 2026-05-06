@@ -1,17 +1,18 @@
 // components/Sidebar.jsx — Linear-минимализм: серый фон, тонкие границы,
 // плотная типографика, один акцентный цвет.
-import React, { useState } from 'react';
+import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  Menu, X, LayoutDashboard, BookUser, Users, Calculator,
+  X, LayoutDashboard, BookUser, Users, Calculator,
   ScrollText, ChevronLeft, ChevronRight, LogOut, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
-  const [isOpen, setIsOpen] = useState(false);
+const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setIsMobileOpen }) => {
   const location = useLocation();
   const { user, logout } = useAuth();
+  const isOpen = isMobileOpen;
+  const setIsOpen = setIsMobileOpen;
 
   const menuItems = [
     { path: '/',           icon: LayoutDashboard, label: 'Дашборд' },
@@ -26,33 +27,27 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
 
   return (
     <>
-      {/* Mobile burger */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-white border border-slate-200 rounded-md text-slate-700 shadow-sm"
-      >
-        {isOpen ? <X size={20} /> : <Menu size={20} />}
-      </button>
-
+      {/* Бургер для мобильного теперь живёт в MobileTopBar (App.jsx).
+          Здесь только сама панель и оверлей. */}
       {isOpen && (
         <div
-          className="lg:hidden fixed inset-0 bg-slate-900/30 z-30"
+          className="lg:hidden fixed inset-0 bg-slate-900/30 z-40"
           onClick={() => setIsOpen(false)}
         />
       )}
 
       <aside
         className={`
-          fixed top-0 left-0 h-full z-40 bg-white border-r border-slate-200
+          fixed top-0 left-0 h-full z-50 bg-white border-r border-slate-200
           transform transition-all duration-200 ease-out
           ${isOpen ? 'translate-x-0' : '-translate-x-full'}
-          lg:translate-x-0
+          lg:translate-x-0 lg:z-40
           ${isCollapsed ? 'w-14' : 'w-56'}
         `}
       >
         <div className="h-full flex flex-col">
-          {/* Logo */}
-          <div className="px-3 py-4 border-b border-slate-100">
+          {/* Logo + close button (mobile) */}
+          <div className="px-3 py-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 bg-slate-900 rounded-md flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
                 УЗ
@@ -63,6 +58,13 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
                 </div>
               )}
             </div>
+            <button
+              onClick={() => setIsOpen(false)}
+              className="lg:hidden p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded"
+              aria-label="Закрыть меню"
+            >
+              <X size={18} />
+            </button>
           </div>
 
           {/* Nav */}

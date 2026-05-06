@@ -219,7 +219,7 @@ const Employees = () => {
   );
 
   return (
-    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6">
       {/* Header */}
       <div className="mb-4 md:mb-5 flex items-end justify-between gap-3 flex-wrap">
         <div>

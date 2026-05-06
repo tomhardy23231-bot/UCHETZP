@@ -29,7 +29,7 @@ const Analytics = () => {
   };
 
   return (
-    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6">
       <div className="mb-5 md:mb-6 flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
           <div>

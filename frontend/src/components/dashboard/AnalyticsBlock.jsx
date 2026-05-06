@@ -204,11 +204,11 @@ const PayrollTrendCard = ({ data, onSelectMonth }) => {
   const max = Math.max(1, ...months.map((m) => m.accrued_total ?? 0));
 
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-4 h-full">
-      <div className="flex items-center gap-2 mb-3">
-        <BarChart3 size={15} className="text-slate-400" />
-        <h3 className="text-sm font-semibold text-slate-900">Начислено · последние 6 месяцев</h3>
-        <span className="text-xs text-slate-400 ml-1">кликни столбец — детали</span>
+    <div className="bg-white border border-slate-200 rounded-lg p-3 md:p-4 h-full min-w-0">
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <BarChart3 size={15} className="text-slate-400 flex-shrink-0" />
+        <h3 className="text-sm font-semibold text-slate-900">Начислено · 6 месяцев</h3>
+        <span className="text-[10px] md:text-xs text-slate-400 ml-auto">тап столбец — детали</span>
       </div>
       <div className="flex items-end gap-2 h-32">
         {months.map((m) => {
@@ -312,23 +312,23 @@ const HeatmapCard = ({ data, onCellClick }) => {
   const max = Math.max(1, ...data.matrix.flat());
 
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-4">
+    <div className="bg-white border border-slate-200 rounded-lg p-3 md:p-4 min-w-0">
       <div className="flex items-center gap-2 mb-1 flex-wrap">
-        <FlameKindling size={15} className="text-amber-500" />
-        <h3 className="text-sm font-semibold text-slate-900">Тепло-карта приходов · <span className="capitalize">{formatMonth(data.month)}</span></h3>
+        <FlameKindling size={15} className="text-amber-500 flex-shrink-0" />
+        <h3 className="text-sm font-semibold text-slate-900 min-w-0">Тепло-карта · <span className="capitalize">{formatMonth(data.month)}</span></h3>
         <div className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-500">
-          <span>меньше</span>
+          <span className="hidden sm:inline">меньше</span>
           <div className="flex gap-0.5">
             {[0.05, 0.2, 0.4, 0.7, 1].map((v) => (
               <div key={v} className="w-3 h-3 rounded" style={{ backgroundColor: heatColor(v) }} />
             ))}
           </div>
-          <span>больше</span>
+          <span className="hidden sm:inline">больше</span>
         </div>
       </div>
-      <p className="text-xs text-slate-500 mb-3">
-        В каких часах люди приходят на работу. Учитываются только <span className="font-medium text-slate-700">отметки прихода</span>{' '}
-        (in_time) — уходы не считаются. Всего за месяц: <span className="font-mono font-semibold text-slate-700">{data.total_scans}</span>.
+      <p className="text-[11px] md:text-xs text-slate-500 mb-3">
+        Только <span className="font-medium text-slate-700">отметки прихода</span> (уходы не считаются).
+        Всего: <span className="font-mono font-semibold text-slate-700">{data.total_scans}</span>.
       </p>
 
       <div className="overflow-x-auto">
@@ -459,16 +459,16 @@ const TopEmployeesCard = ({ data, onOpen }) => {
             ) : (
               <ul className="space-y-1.5">
                 {top3.map((e, idx) => (
-                  <li key={e.employee_id} className="flex items-center gap-2">
-                    <span className={`w-5 h-5 text-[10px] font-bold rounded flex items-center justify-center ${
+                  <li key={e.employee_id} className="flex items-center gap-2 min-w-0">
+                    <span className={`w-5 h-5 text-[10px] font-bold rounded flex items-center justify-center flex-shrink-0 ${
                       idx === 0 ? 'bg-amber-100 text-amber-700' :
                       idx === 1 ? 'bg-slate-100 text-slate-600' :
                                   'bg-orange-50 text-orange-700'
                     }`}>
                       {idx === 0 ? <Crown size={10} /> : idx + 1}
                     </span>
-                    <span className="text-xs text-slate-800 truncate flex-1 font-medium">{e.employee_name}</span>
-                    <span className="text-xs font-mono font-semibold text-slate-900 tabular-nums">
+                    <span className="text-xs text-slate-800 truncate flex-1 min-w-0 font-medium">{e.employee_name}</span>
+                    <span className="text-xs font-mono font-semibold text-slate-900 tabular-nums flex-shrink-0">
                       {c.valueFmt(e)}
                     </span>
                   </li>

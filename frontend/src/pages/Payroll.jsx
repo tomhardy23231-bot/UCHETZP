@@ -308,8 +308,9 @@ const Payroll = () => {
       icon={LockOpen}
       onClick={() => setShowReopenConfirm(true)}
       title="Снять закрытие месяца"
+      className="flex-shrink-0"
     >
-      Открыть
+      <span className="hidden sm:inline">Открыть</span>
     </Button>
   ) : (
     <Button
@@ -318,8 +319,9 @@ const Payroll = () => {
       icon={Lock}
       onClick={() => setShowCloseConfirm(true)}
       title="Закрыть расчётный месяц — заблокирует редактирование"
+      className="flex-shrink-0"
     >
-      Закрыть
+      <span className="hidden sm:inline">Закрыть</span>
     </Button>
   );
 
@@ -553,7 +555,7 @@ const Payroll = () => {
   // ==================== VIEW 1: MASTER LIST ====================
   if (!selectedEmployee) {
     return (
-      <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
+      <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6">
         {/* Header */}
         <div className="mb-4 md:mb-5 flex items-end justify-between gap-3 flex-wrap">
           <div>
@@ -612,17 +614,17 @@ const Payroll = () => {
 
         {/* Stats */}
         {!totalPayroll.loading && employees.length > 0 && (
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            <div className="bg-white border border-slate-200 rounded-lg p-4">
-              <div className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-1">Начислено всего</div>
-              <div className="text-2xl font-semibold text-slate-900 font-mono">
-                {totalPayroll.totalBase.toFixed(2)} <span className="text-sm text-slate-400">₴</span>
+          <div className="grid grid-cols-2 gap-2 md:gap-3 mb-4 md:mb-5">
+            <div className="bg-white border border-slate-200 rounded-lg p-3 md:p-4 min-w-0">
+              <div className="text-[10px] md:text-xs text-slate-500 uppercase tracking-wider font-medium mb-1 truncate">Начислено всего</div>
+              <div className="text-lg md:text-2xl font-semibold text-slate-900 font-mono break-all">
+                {totalPayroll.totalBase.toFixed(2)} <span className="text-xs md:text-sm text-slate-400">₴</span>
               </div>
             </div>
-            <div className="bg-slate-900 text-white border border-slate-900 rounded-lg p-4">
-              <div className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">К выплате всего</div>
-              <div className="text-2xl font-semibold font-mono">
-                {totalPayroll.toPay.toFixed(2)} <span className="text-sm text-slate-400">₴</span>
+            <div className="bg-slate-900 text-white border border-slate-900 rounded-lg p-3 md:p-4 min-w-0">
+              <div className="text-[10px] md:text-xs text-slate-400 uppercase tracking-wider font-medium mb-1 truncate">К выплате всего</div>
+              <div className="text-lg md:text-2xl font-semibold font-mono break-all">
+                {totalPayroll.toPay.toFixed(2)} <span className="text-xs md:text-sm text-slate-400">₴</span>
               </div>
             </div>
           </div>
@@ -681,24 +683,28 @@ const Payroll = () => {
   const editLocked = isCurrentMonthClosed || payrollData?.is_closed === true;
 
   return (
-    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4 md:mb-5">
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
+      <div className="mb-4 md:mb-5">
+        {/* Назад на отдельной строке на мобильном для удобного тапа */}
+        <div className="flex items-center gap-2 mb-3 md:mb-0 md:hidden">
           <Button variant="secondary" size="sm" icon={ArrowLeft} onClick={backToList}>Назад</Button>
-          <div className="flex items-center gap-2 md:gap-2.5 min-w-0 flex-1">
+        </div>
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+            <Button variant="secondary" size="sm" icon={ArrowLeft} onClick={backToList} className="hidden md:inline-flex">Назад</Button>
             <Avatar name={selectedEmployee.name} size="md" />
             <div className="min-w-0 flex-1">
-              <h1 className="text-base md:text-xl font-semibold text-slate-900 truncate">{selectedEmployee.name}</h1>
+              <h1 className="text-base md:text-xl font-semibold text-slate-900 truncate leading-tight">{selectedEmployee.name}</h1>
               <p className="text-[11px] md:text-xs text-slate-500 truncate">{selectedEmployee.position}</p>
             </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {monthSelector}
-          {closureButton}
-          <Button variant="secondary" size="sm" icon={Printer} onClick={handlePrint}>PDF</Button>
-          <Button variant="success" size="sm" icon={FileSpreadsheet} onClick={exportCurrentPayslip}>Excel</Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {monthSelector}
+            {closureButton}
+            <Button variant="secondary" size="sm" icon={Printer} onClick={handlePrint}>PDF</Button>
+            <Button variant="success" size="sm" icon={FileSpreadsheet} onClick={exportCurrentPayslip}>Excel</Button>
+          </div>
         </div>
       </div>
 

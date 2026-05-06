@@ -108,7 +108,7 @@ const Dashboard = () => {
   }, [attendance]);
 
   return (
-    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6 pt-16 lg:pt-6">
+    <div className="min-h-screen px-3 sm:px-6 md:px-8 py-4 md:py-6">
       {/* Header */}
       <div className="mb-5 md:mb-6 flex items-end justify-between gap-3 flex-wrap">
         <div>
@@ -126,22 +126,22 @@ const Dashboard = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3 mb-5 md:mb-6">
         {[
           { label: 'Всего',       value: stats.total,    icon: UsersRound,     hint: 'отметок сегодня' },
           { label: 'На работе',   value: stats.working,  icon: UserRoundCheck, hint: 'сейчас в офисе', accent: 'text-emerald-600' },
           { label: 'Ушли',        value: stats.left,     icon: UserRoundX,     hint: 'завершили смену' },
-          { label: 'Средняя смена', value: stats.avgHours + (stats.avgHours !== '—' ? 'ч' : ''), icon: Timer, hint: 'на закрытых сменах' },
+          { label: 'Средняя',     value: stats.avgHours + (stats.avgHours !== '—' ? 'ч' : ''), icon: Timer, hint: 'смена' },
         ].map((s) => {
           const Icon = s.icon;
           return (
-            <div key={s.label} className="bg-white border border-slate-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">{s.label}</span>
-                <Icon size={14} className="text-slate-400" />
+            <div key={s.label} className="bg-white border border-slate-200 rounded-lg p-3 md:p-4 min-w-0">
+              <div className="flex items-center justify-between mb-1.5 md:mb-2 gap-1">
+                <span className="text-[10px] md:text-xs font-medium text-slate-500 uppercase tracking-wider truncate">{s.label}</span>
+                <Icon size={14} className="text-slate-400 flex-shrink-0" />
               </div>
-              <div className={`text-2xl font-semibold ${s.accent || 'text-slate-900'}`}>{s.value}</div>
-              <div className="text-xs text-slate-400 mt-1">{s.hint}</div>
+              <div className={`text-xl md:text-2xl font-semibold ${s.accent || 'text-slate-900'}`}>{s.value}</div>
+              <div className="text-[10px] md:text-xs text-slate-400 mt-0.5 md:mt-1 truncate">{s.hint}</div>
             </div>
           );
         })}
