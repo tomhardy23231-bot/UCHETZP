@@ -302,8 +302,11 @@ const ForecastModal = ({ data, onClose }) => {
               <div className="my-1.5 border-t border-slate-200" />
               <Row label="Прогноз доначисления (по темпу)" value={`+${formatMoney(projected_extra)} ₴`} positive />
               <Row label="Прогноз итога (только по темпу)" value={`${formatMoney(projected_accrued ?? 0)} ₴`} />
-              {usingHistory && (
-                <Row label="Итог с поправкой на историю" value={`${formatMoney(finalForecast)} ₴`} bold />
+              <Row label="Итоговый прогноз (бленд сигналов)" value={`${formatMoney(finalForecast)} ₴`} bold />
+              {usingSkill && (
+                <div className="text-[10px] text-slate-500 italic mt-1">
+                  Веса подобраны по точности сигналов на {smart_forecast.snapshots_learned_from} наблюдениях
+                </div>
               )}
             </>
           )}
