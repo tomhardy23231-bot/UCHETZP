@@ -10,7 +10,7 @@ class TransactionType(enum.Enum):
     """Типы финансовых транзакций."""
     BONUS = "bonus"       # Премия
     ADVANCE = "advance"   # Аванс
-    FINE = "fine"         # Штраф
+    FINE = "fine"         # Удержание
     POINTS = "points"     # Сдельная работа (баллы)
 
 
@@ -65,7 +65,7 @@ class Attendance(Base):
 
 
 class FinancialTransaction(Base):
-    """Модель финансовых транзакций (премии, авансы, штрафы, сдельная работа)."""
+    """Модель финансовых транзакций (премии, авансы, удержания и прочие, сдельная работа)."""
     __tablename__ = "financial_transactions"
 
     id = Column(Integer, primary_key=True, index=True)

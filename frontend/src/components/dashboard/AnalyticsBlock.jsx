@@ -295,7 +295,7 @@ const ForecastModal = ({ data, onClose }) => {
           <Row label="Начислено всего" value={`${formatMoney(accruedNow)} ₴`} bold />
           <div className="my-1.5 border-t border-slate-200" />
           <Row label="Авансы" value={`−${formatMoney(current.advances)} ₴`} negative />
-          <Row label="Штрафы" value={`−${formatMoney(current.fines)} ₴`} negative />
+          <Row label="Удержания и прочие" value={`−${formatMoney(current.fines)} ₴`} negative />
           <Row label="К выплате на руки" value={`${formatMoney(current.to_pay)} ₴`} />
           {is_current_month && (
             <>
@@ -373,7 +373,7 @@ const ForecastModal = ({ data, onClose }) => {
             </div>
 
             <p className="text-[10px] text-blue-800/80 leading-relaxed pt-1 border-t border-blue-200">
-              Прогноз самообучается: каждый день сохраняется снимок с тремя сигналами. Когда месяц завершается — фиксируется факт, и сигнал, который ошибался меньше, начинает получать больший вес в следующих расчётах. Премии/авансы/штрафы экстраполировать нельзя — они уже учтены в начисленном «как есть».
+              Прогноз самообучается: каждый день сохраняется снимок с тремя сигналами. Когда месяц завершается — фиксируется факт, и сигнал, который ошибался меньше, начинает получать больший вес в следующих расчётах. Премии/авансы/удержания и прочие экстраполировать нельзя — они уже учтены в начисленном «как есть».
             </p>
           </div>
         )}
@@ -435,7 +435,7 @@ const PayrollTrendCard = ({ data, onSelectMonth }) => {
         })}
       </div>
       <p className="mt-2 text-[10px] text-slate-400 leading-snug">
-        Начислено = часовая часть + сдельная + премии. Авансы и штрафы не вычитаются — столбец показывает «сколько заработано».
+        Начислено = часовая часть + сдельная + премии. Авансы и удержания и прочие не вычитаются — столбец показывает «сколько заработано».
       </p>
     </div>
   );
@@ -453,7 +453,7 @@ const TrendBreakdownModal = ({ monthData, onClose }) => {
             </div>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-1">К выплате (за вычетом авансов/штрафов)</div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-1">К выплате (за вычетом авансов/удержаний и прочих)</div>
             <div className="text-xl font-bold tabular-nums text-slate-900">
               {formatMoney(monthData.to_pay_total ?? 0)} <span className="text-xs text-slate-500">₴</span>
             </div>

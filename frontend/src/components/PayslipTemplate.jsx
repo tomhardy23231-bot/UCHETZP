@@ -25,7 +25,7 @@ const PayslipTemplate = React.forwardRef(({ employee, payrollData, transactions 
         switch (type) {
             case 'bonus': return 'Премия';
             case 'advance': return 'Аванс';
-            case 'fine': return 'Штраф';
+            case 'fine': return 'Удержание';
             case 'points': return 'Сдельная';
             default: return type;
         }

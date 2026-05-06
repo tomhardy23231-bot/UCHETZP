@@ -17,7 +17,7 @@ const formatMoney = (n) => Math.round(n || 0).toLocaleString('ru-RU');
 const TRANSACTION_TYPES = {
   bonus:   { label: 'Премия',  icon: TrendingUp,    color: 'emerald', sign: '+' },
   advance: { label: 'Аванс',   icon: Wallet,        color: 'amber',   sign: '−' },
-  fine:    { label: 'Штраф',   icon: AlertTriangle, color: 'rose',    sign: '−' },
+  fine:    { label: 'Удержание',   icon: AlertTriangle, color: 'rose',    sign: '−' },
   points:  { label: 'Баллы',    icon: Target,        color: 'indigo',  sign: '+' },
 };
 
@@ -143,7 +143,7 @@ const CabinetPayroll = () => {
             </div>
           )}
 
-          {/* Премии / авансы / штрафы — компактные пары */}
+          {/* Премии / авансы / удержания и прочие — компактные пары */}
           <div className="grid grid-cols-3 gap-3">
             <SummaryCard
               icon={<TrendingUp size={16} />}
@@ -159,7 +159,7 @@ const CabinetPayroll = () => {
             />
             <SummaryCard
               icon={<AlertTriangle size={16} />}
-              label="Штрафы"
+              label="Удержания и прочие"
               value={`−${formatMoney(animFines)}`}
               color="rose"
             />
@@ -176,7 +176,7 @@ const CabinetPayroll = () => {
               {payroll.piecework_sum > 0 && <BreakdownRow label="Баллы" value={`+${formatMoney(payroll.piecework_sum)}`} />}
               {payroll.bonuses_total > 0 && <BreakdownRow label="Премии" value={`+${formatMoney(payroll.bonuses_total)}`} positive />}
               {payroll.advances_total > 0 && <BreakdownRow label="Авансы" value={`−${formatMoney(payroll.advances_total)}`} negative />}
-              {payroll.fines_total > 0 && <BreakdownRow label="Штрафы" value={`−${formatMoney(payroll.fines_total)}`} negative />}
+              {payroll.fines_total > 0 && <BreakdownRow label="Удержания и прочие" value={`−${formatMoney(payroll.fines_total)}`} negative />}
               <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
                 <span className="font-black text-slate-800">Итого</span>
                 <span className="font-black text-slate-900 text-lg tabular-nums">{formatMoney(payroll.to_pay)} ₴</span>
@@ -257,9 +257,9 @@ const COLOR_BG = {
 
 const SummaryCard = ({ icon, label, value, color }) => (
   <div className={`rounded-2xl p-3 border ${COLOR_BG[color]}`}>
-    <div className="flex items-center gap-1 mb-1.5 opacity-80">
-      {icon}
-      <span className="text-[10px] font-bold uppercase tracking-widest">{label}</span>
+    <div className="flex items-start gap-1 mb-1.5 opacity-80">
+      <span className="flex-shrink-0 mt-0.5">{icon}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wide leading-tight">{label}</span>
     </div>
     <p className="text-base font-black tabular-nums">{value}</p>
   </div>

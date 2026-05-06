@@ -122,7 +122,7 @@ const Payroll = () => {
       ['Сдельная (грн)', payrollData.piecework_sum?.toFixed(2)],
       ['Премии (грн)', payrollData.bonuses_total?.toFixed(2)],
       ['Авансы (грн)', payrollData.advances_total?.toFixed(2)],
-      ['Штрафы (грн)', payrollData.fines_total?.toFixed(2)],
+      ['Удержания и прочие (грн)', payrollData.fines_total?.toFixed(2)],
       ['К ВЫПЛАТЕ (грн)', payrollData.to_pay?.toFixed(2)],
     ];
     downloadCsv(
@@ -143,7 +143,7 @@ const Payroll = () => {
       const headers = [
         'ФИО', 'Должность', 'Часов', 'Часовая ставка (грн)',
         'База (грн)', 'Баллов', 'Сдельная (грн)',
-        'Премии (грн)', 'Авансы (грн)', 'Штрафы (грн)',
+        'Премии (грн)', 'Авансы (грн)', 'Удержания и прочие (грн)',
         'К ВЫПЛАТЕ (грн)', 'Номер счёта',
       ];
       const rows = payrolls.map((p, idx) => {
@@ -405,7 +405,7 @@ const Payroll = () => {
     switch (type) {
       case 'bonus': return 'Премия';
       case 'advance': return 'Аванс';
-      case 'fine': return 'Штраф';
+      case 'fine': return 'Удержание';
       case 'points': return 'Сдельная';
       default: return type;
     }
@@ -423,7 +423,7 @@ const Payroll = () => {
   };
 
   // --- MODALS ---
-  // Универсальная модалка транзакций (Премия / Аванс / Штраф / Сдельная) — один компонент
+  // Универсальная модалка транзакций (Премия / Аванс / Удержание / Сдельная) — один компонент
   const transactionModal = (
     <TransactionModal
       open={transactionModalType !== null}
@@ -474,7 +474,7 @@ const Payroll = () => {
   const BonusesListModal = useMemo(() => {
     const bonusTransactions = transactions.filter(t => t.type === 'bonus' || t.type === 'fine');
     return (
-      <Modal open={showBonusesListModal} onClose={closeAllModals} title="Премии и штрафы" icon={ReceiptText} size="lg">
+      <Modal open={showBonusesListModal} onClose={closeAllModals} title="Премии, удержания и прочие" icon={ReceiptText} size="lg">
         {bonusTransactions.length === 0 ? (
           <div className="p-12 text-center">
             <AlertTriangle size={28} className="mx-auto mb-2 text-slate-300" />
@@ -519,7 +519,7 @@ const Payroll = () => {
         </p>
         <ul className="text-xs text-slate-600 space-y-1 list-disc pl-5">
           <li>Ставки сотрудников на этот месяц замораживаются (изменение в карточке не повлияет на прошлый расчёт)</li>
-          <li>Нельзя добавлять, удалять или править премии/авансы/штрафы/сдельную</li>
+          <li>Нельзя добавлять, удалять или править премии/авансы/удержания и прочие/сдельную</li>
           <li>Нельзя пересчитать часы и баллы</li>
         </ul>
         <p className="text-xs text-slate-500">
@@ -745,7 +745,7 @@ const Payroll = () => {
               <div className="text-2xl font-semibold text-slate-900 font-mono">
                 −{totalDeducted.toFixed(2)} <span className="text-sm text-slate-400">₴</span>
               </div>
-              <div className="text-[11px] text-slate-400 mt-0.5">авансы + штрафы</div>
+              <div className="text-[11px] text-slate-400 mt-0.5">авансы + удержания и прочие</div>
             </div>
             <div className="bg-slate-900 text-white border border-slate-900 rounded-lg p-4">
               <div className="flex items-center justify-between text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">
@@ -840,7 +840,7 @@ const Payroll = () => {
                   <div className="flex items-center gap-3">
                     <AlertTriangle size={16} className="text-rose-500" />
                     <div>
-                      <div className="text-sm font-medium text-slate-900">Штрафы</div>
+                      <div className="text-sm font-medium text-slate-900">Удержания и прочие</div>
                       <div className="text-xs text-slate-500">взыскания</div>
                     </div>
                   </div>
@@ -869,7 +869,7 @@ const Payroll = () => {
                   <Button variant="secondary" size="sm" icon={Target}        onClick={() => openTransactionModal('POINTS')}  className="justify-start" disabled={editLocked}>Сдельная</Button>
                   <Button variant="secondary" size="sm" icon={TrendingUp}    onClick={() => openTransactionModal('BONUS')}   className="justify-start" disabled={editLocked}>Премия</Button>
                   <Button variant="secondary" size="sm" icon={Banknote}      onClick={() => openTransactionModal('ADVANCE')} className="justify-start" disabled={editLocked}>Аванс</Button>
-                  <Button variant="secondary" size="sm" icon={AlertTriangle} onClick={() => openTransactionModal('FINE')}    className="justify-start" disabled={editLocked}>Штраф</Button>
+                  <Button variant="secondary" size="sm" icon={AlertTriangle} onClick={() => openTransactionModal('FINE')}    className="justify-start" disabled={editLocked}>Удержание</Button>
                 </div>
                 {editLocked && (
                   <p className="mt-2 text-[10px] text-amber-700 leading-snug">

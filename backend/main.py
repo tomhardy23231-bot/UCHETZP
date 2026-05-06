@@ -433,7 +433,7 @@ def get_my_transactions(
     current_user: models.User = Depends(auth.require_employee),
     db: Session = Depends(database.get_db),
 ):
-    """Финансовые транзакции (премии/авансы/штрафы/баллы) текущего сотрудника."""
+    """Финансовые транзакции (премии/авансы/удержания и прочие/баллы) текущего сотрудника."""
     employee = _resolve_my_employee(current_user, db)
     _log_cabinet_event(db, request, "view_transactions", user=current_user)
     if month:
@@ -1116,7 +1116,7 @@ def create_transaction(
     _admin: models.User = Depends(auth.require_admin),
 ):
     """
-    Создать финансовую транзакцию (премия, аванс, штраф, сдельная работа).
+    Создать финансовую транзакцию (премия, аванс, удержание, сдельная работа).
 
     Для типа POINTS:
     - amount вычисляется автоматически как points_count × employee.point_value
@@ -1465,7 +1465,7 @@ def dashboard_payroll_trend(
             y -= 1
         month_str = f"{y}-{m:02d}"
         to_pay_total = 0.0
-        accrued_total = 0.0  # начислено: base + piecework + bonuses (без штрафов/авансов)
+        accrued_total = 0.0  # начислено: base + piecework + bonuses (без удержаний и прочих/авансов)
         breakdown = []
         for emp in employees:
             try:
@@ -1506,7 +1506,7 @@ def dashboard_top_employees(
     db: Session = Depends(database.get_db),
     _admin: models.User = Depends(auth.require_admin),
 ):
-    """Топы сотрудников за месяц: по часам, по баллам, по премиям, по штрафам.
+    """Топы сотрудников за месяц: по часам, по баллам, по премиям, по удержаниям и прочим.
     Возвращает по каждому критерию полный отсортированный список."""
     if not month:
         month = crud.get_current_month_str()

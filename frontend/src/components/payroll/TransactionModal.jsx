@@ -1,5 +1,5 @@
 // components/payroll/TransactionModal.jsx — одна универсальная модалка
-// для всех 4 типов транзакций (премия, аванс, штраф, сдельная). Раньше было
+// для всех 4 типов транзакций (премия, аванс, удержание, сдельная). Раньше было
 // 4 копии 90% одинакового кода.
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, Wallet, AlertTriangle, Target } from 'lucide-react';
@@ -27,12 +27,12 @@ const TYPE_CONFIG = {
     placeholder: '5000.00',
   },
   FINE: {
-    title: 'Штраф',
+    title: 'Удержание',
     icon: AlertTriangle,
     accent: 'danger',
     fields: ['amount', 'comment', 'date'],
     amountLabel: 'Сумма (грн)',
-    commentLabel: 'Причина штрафа',
+    commentLabel: 'Причина удержания',
     placeholder: '500.00',
   },
   POINTS: {
