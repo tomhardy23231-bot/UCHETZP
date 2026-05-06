@@ -110,7 +110,13 @@ const AnalyticsBlock = ({ selectedMonth }) => {
 // ---------- FORECAST TILE ----------
 const ForecastTile = ({ data, onClick }) => {
   if (!data) return <div className="bg-white border border-slate-200 rounded-lg p-4 h-full">Нет данных</div>;
-  const { current, projected_to_pay, projected_extra, elapsed_workdays, remaining_workdays, is_current_month } = data;
+  const {
+    current, projected_accrued, projected_extra,
+    elapsed_workdays, remaining_workdays, is_current_month,
+  } = data;
+  const accruedNow = current.accrued ?? 0;
+  // Для прошлых/будущих месяцев projected_accrued == accruedNow (нет экстраполяции).
+  const headline = is_current_month ? projected_accrued : accruedNow;
   const total = elapsed_workdays + remaining_workdays;
   const pct = total > 0 ? Math.round((elapsed_workdays / total) * 100) : 100;
 
@@ -123,21 +129,34 @@ const ForecastTile = ({ data, onClick }) => {
       <div>
         <div className="flex items-center justify-between mb-1">
           <span className="text-[11px] uppercase tracking-wider text-slate-400 font-medium">
-            {is_current_month ? 'Прогноз ФОТ' : 'ФОТ за месяц'}
+            {is_current_month ? 'Прогноз ФОТ к концу месяца' : 'ФОТ за месяц'}
           </span>
           <Activity size={14} className="text-slate-400 group-hover:text-white transition-colors" />
         </div>
         <div className="text-3xl font-bold tabular-nums mt-2">
-          {formatMoney(projected_to_pay)} <span className="text-lg text-slate-400">₴</span>
+          {formatMoney(headline)} <span className="text-lg text-slate-400">₴</span>
         </div>
-        <div className="text-xs text-slate-400 mt-1">
-          {is_current_month
-            ? `сейчас ${formatMoney(current.to_pay)} ₴ · прогноз +${formatMoney(projected_extra)} ₴`
-            : `итог за ${formatMonth(data.month)}`
-          }
+        <div className="text-[11px] text-slate-400 mt-1 leading-snug">
+          {is_current_month ? (
+            <>
+              уже начислено <span className="text-white font-semibold">{formatMoney(accruedNow)} ₴</span>
+              {' '}за <span className="text-white font-semibold">{elapsed_workdays}</span> раб. дн.{' '}
+              · средний темп <span className="text-white font-semibold">
+                {elapsed_workdays > 0 ? formatMoney(accruedNow / elapsed_workdays) : 0} ₴/день
+              </span>
+              {remaining_workdays > 0 && (
+                <>
+                  {' '}× <span className="text-white font-semibold">{remaining_workdays}</span> оставшихся
+                  {' '}≈ <span className="text-white font-semibold">+{formatMoney(projected_extra)} ₴</span>
+                </>
+              )}
+            </>
+          ) : (
+            <>часовая часть + сдельная + премии · итог за <span className="capitalize">{formatMonth(data.month)}</span></>
+          )}
         </div>
       </div>
-      {is_current_month && (
+      {is_current_month && total > 0 && (
         <div className="mt-3">
           <div className="flex justify-between text-[10px] text-slate-400 mb-1">
             <span>{elapsed_workdays} раб. дн. прошло</span>
@@ -151,42 +170,68 @@ const ForecastTile = ({ data, onClick }) => {
           </div>
         </div>
       )}
+      <div className="text-[10px] text-slate-500 mt-2 group-hover:text-slate-400 transition-colors">
+        тап — все цифры и формула
+      </div>
     </button>
   );
 };
 
 const ForecastModal = ({ data, onClose }) => {
-  const { current, projected_to_pay, projected_extra, elapsed_workdays, remaining_workdays, is_current_month, month } = data;
+  const {
+    current, projected_to_pay, projected_accrued, projected_extra,
+    elapsed_workdays, remaining_workdays, is_current_month, month,
+  } = data;
+  const accruedNow = current.accrued ?? (current.base_rate + current.piecework + current.bonuses);
+  const ratePerDay = elapsed_workdays > 0 ? (current.base_rate + current.piecework) / elapsed_workdays : 0;
   return (
-    <ModalShell title={`Прогноз ФОТ · ${formatMonth(month)}`} onClose={onClose} icon={Activity}>
+    <ModalShell title={`${is_current_month ? 'Прогноз ФОТ' : 'ФОТ'} · ${formatMonth(month)}`} onClose={onClose} icon={Activity}>
       <div className="p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <Stat label="Сейчас начислено" value={`${formatMoney(current.to_pay)} ₴`} mono />
-          <Stat label={is_current_month ? 'Прогноз итога' : 'Итог'} value={`${formatMoney(projected_to_pay)} ₴`} mono accent="text-emerald-600" />
+          <Stat label="Уже начислено" value={`${formatMoney(accruedNow)} ₴`} mono />
+          <Stat
+            label={is_current_month ? 'Прогноз ФОТ к концу месяца' : 'Итог ФОТ'}
+            value={`${formatMoney(projected_accrued ?? accruedNow)} ₴`}
+            mono accent="text-emerald-600"
+          />
           <Stat label="Прошло рабочих дней" value={elapsed_workdays} />
           <Stat label="Осталось рабочих дней" value={remaining_workdays} />
         </div>
 
         <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Структура ФОТ</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Структура за месяц</p>
           <Row label="Часовая часть" value={`+${formatMoney(current.base_rate)} ₴`} />
           <Row label="Сдельная" value={`+${formatMoney(current.piecework)} ₴`} />
           <Row label="Премии" value={`+${formatMoney(current.bonuses)} ₴`} positive />
+          <div className="my-1.5 border-t border-slate-200" />
+          <Row label="Начислено всего" value={`${formatMoney(accruedNow)} ₴`} bold />
+          <div className="my-1.5 border-t border-slate-200" />
           <Row label="Авансы" value={`−${formatMoney(current.advances)} ₴`} negative />
           <Row label="Штрафы" value={`−${formatMoney(current.fines)} ₴`} negative />
+          <Row label="К выплате на руки" value={`${formatMoney(current.to_pay)} ₴`} />
           {is_current_month && (
             <>
               <div className="my-1.5 border-t border-slate-200" />
               <Row label="Прогноз доначисления" value={`+${formatMoney(projected_extra)} ₴`} positive />
-              <Row label="Итого прогноз" value={`${formatMoney(projected_to_pay)} ₴`} bold />
+              <Row label="Итого ФОТ к концу месяца" value={`${formatMoney(projected_accrued ?? 0)} ₴`} bold />
             </>
           )}
         </div>
 
         {is_current_month && (
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            Прогноз = текущая часовая+сдельная часть × (рабочих дней осталось / прошло). Премии, авансы и штрафы прогнозом не дополняются — экстраполируется только то, что зависит от темпа работы.
-          </p>
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-1.5">
+            <p className="text-xs font-medium text-blue-900 uppercase tracking-wider">Откуда прогноз</p>
+            <p className="text-[11px] text-blue-900 leading-relaxed font-mono">
+              <span className="font-semibold">{formatMoney(current.base_rate + current.piecework)} ₴</span>{' '}
+              (часы + сдельная) ÷ <span className="font-semibold">{elapsed_workdays}</span> прошедших раб. дн.{' '}
+              = <span className="font-semibold">{formatMoney(ratePerDay)} ₴/день</span>{' '}
+              × <span className="font-semibold">{remaining_workdays}</span> оставшихся
+              {' '}≈ <span className="font-semibold">+{formatMoney(projected_extra)} ₴</span>
+            </p>
+            <p className="text-[10px] text-blue-800/80 leading-relaxed">
+              Экстраполируется только то, что зависит от темпа работы (часы и сдельная). Премии, авансы и штрафы — это разовые события, их добавлять «в среднем» нельзя, поэтому в прогноз они входят как есть, без масштабирования.
+            </p>
+          </div>
         )}
       </div>
     </ModalShell>

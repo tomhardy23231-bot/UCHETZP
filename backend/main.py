@@ -1588,13 +1588,18 @@ def dashboard_payroll_forecast(
         current_fines += float(p.get("fines_total", 0) or 0)
         current_piecework += float(p.get("piecework_sum", 0) or 0)
 
-    # Прогноз: только base + piecework масштабируем
+    # Начислено — то, что заработали, без вычета авансов и штрафов.
+    # Это «ФОТ» в традиционном смысле и не «съедается» когда раздал зарплату авансами.
+    current_accrued = current_base + current_piecework + current_bonuses
+
+    # Прогноз: масштабируем base + piecework по прошедшим/оставшимся рабочим дням
     if elapsed_workdays > 0 and remaining_workdays > 0:
         rate_per_day = (current_base + current_piecework) / elapsed_workdays
         projected_extra = rate_per_day * remaining_workdays
     else:
         projected_extra = 0.0
     projected_to_pay = current_to_pay + projected_extra
+    projected_accrued = current_accrued + projected_extra
 
     return {
         "month": month,
@@ -1603,6 +1608,7 @@ def dashboard_payroll_forecast(
         "remaining_workdays": remaining_workdays,
         "current": {
             "to_pay": round(current_to_pay, 2),
+            "accrued": round(current_accrued, 2),
             "base_rate": round(current_base, 2),
             "piecework": round(current_piecework, 2),
             "bonuses": round(current_bonuses, 2),
@@ -1610,6 +1616,7 @@ def dashboard_payroll_forecast(
             "fines": round(current_fines, 2),
         },
         "projected_to_pay": round(projected_to_pay, 2),
+        "projected_accrued": round(projected_accrued, 2),
         "projected_extra": round(projected_extra, 2),
     }
 
