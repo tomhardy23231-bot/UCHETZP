@@ -6,12 +6,18 @@ UCHETZP (по состоянию на 2026-04-29). Это эталон-исто�
 Все более ранние черновики (`firmware_v3*`, `firmware_fixed*`, `rfid_attendance_v3.*`)
 — устаревшие и **нерабочие**: они шлют данные на мёртвый домен `uchetzp.vercel.app` (404).
 
+> ⚠️ **Переезд на свой сервер (09.2026).** Прод переехал с Vercel на VPS —
+> `https://zp.haskyhub.com`. Новый адрес приёма отметок:
+> `https://zp.haskyhub.com/api/attendance/bulk-scan`. В `scanner_firmware.cpp` (строка
+> `API_URL_BULK`) пока стоит старый Vercel-адрес — чтобы отметки шли на сервер, заменить
+> его на новый и перепрошить сканер по OTA (хост `HARIZMA-SCANNER`).
+
 ## Ключевые параметры
 
 | Параметр         | Значение                                                  |
 |------------------|-----------------------------------------------------------|
 | Платформа        | ESP32 (Arduino framework)                                 |
-| Сервер (API)     | `https://uche12tzp.vercel.app/api/attendance/bulk-scan`   |
+| Сервер (API)     | **новый:** `https://zp.haskyhub.com/api/attendance/bulk-scan` (в `.cpp` пока старый Vercel — перепрошить) |
 | Формат отправки  | `{"scans":[{"card_id":"...","timestamp":"..."}]}`         |
 | RFID-ридер       | UART (Serial2), пин RX = 16, 9600 8N1                     |
 | Экран            | ST7735 1.44" (SPI)                                        |

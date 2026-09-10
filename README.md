@@ -1,0 +1,65 @@
+# UCHETZP — учёт зарплаты по RFID
+
+Система учёта рабочего времени и зарплаты: сотрудники отмечаются RFID-картой на
+аппаратном сканере, backend считает часы и зарплату, в веб-интерфейсе — журнал
+посещаемости, сотрудники, начисления, финансовые операции и личные кабинеты сотрудников.
+
+## Из чего состоит
+
+- **`backend/`** — API на **FastAPI** (Python) + **PostgreSQL** (SQLAlchemy).
+  Аутентификация JWT + bcrypt. Все маршруты под `/api/*`.
+- **`frontend/`** — SPA на **React + Vite** (сборка в статику `dist/`). API зовёт
+  относительным путём (`/api/...`), поэтому фронт и бэкенд обязаны жить на одном домене.
+- **`firmware/`** — прошивка ESP32-сканера (`scanner_firmware.cpp`). Шлёт отметки
+  пачкой на `/api/attendance/bulk-scan`. Подробности — [`firmware/README.md`](firmware/README.md).
+
+## Где работает (прод)
+
+**С 09.2026 — на собственном VPS (haskyhub), в Docker.** Проект переехал с Vercel на свой сервер.
+
+| | |
+|---|---|
+| Адрес | `https://zp.haskyhub.com` (реверс-прокси Caddy, авто-TLS Let's Encrypt) |
+| Каталог на сервере | `/home/hasky/uchet-zp/` |
+| Контейнеры | `uchet-db` (Postgres 17) · `uchet-api` (FastAPI/uvicorn) · `uchet-web` (Caddy: статика фронта + прокси `/api` на бэкенд) |
+| База | Postgres в контейнере (перенос дампом с Neon, целиком) |
+| Бэкап базы | ежедневно в 01:00 |
+| Автодеплой | push в `main` → сервер сам собирает и перезапускает (сборка `api`+`web`, откат при ошибке) |
+
+Раньше проект жил на **Vercel + Neon**; `vercel.json` остался от того деплоя и для прода
+больше не используется. `update_db.py` в корне — разовый скрипт правки схемы с
+захардкоженной строкой Neon, приложением не запускается.
+
+## Переменные окружения (backend)
+
+| Переменная | Зачем |
+|---|---|
+| `DATABASE_URL` | подключение к Postgres — **обязательна** (без неё backend не стартует) |
+| `JWT_SECRET` | подпись JWT-сессий — обязательна на проде (по умолчанию небезопасное dev-значение) |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | необязательные: сид администратора при пустой базе |
+
+> ⚠️ `cloudinary` есть в `requirements.txt`, но в коде не используется — ключи не нужны.
+
+## Запуск локально
+
+Backend:
+```bash
+cd backend
+pip install -r requirements.txt
+export DATABASE_URL=postgresql://user:pass@localhost:5432/uchet
+uvicorn main:app --reload --port 8000
+```
+
+Frontend:
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173, API берёт с http://localhost:8000
+```
+
+## Сканер (важно при переезде)
+
+Аппаратный сканер (`firmware/`, устройство `HARIZMA-SCANNER`) шлёт отметки на адрес,
+зашитый в прошивку (`API_URL_BULK`). После переезда на сервер его нужно перенацелить на
+`https://zp.haskyhub.com/api/attendance/bulk-scan` и перепрошить по OTA — иначе отметки
+продолжат уходить на старый адрес. См. [`firmware/README.md`](firmware/README.md).
