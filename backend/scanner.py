@@ -842,7 +842,7 @@ def scanner_health(
     """Короткая сводка для плашки на дашборде: есть ли проблемы."""
     devices = db.query(models.ScannerDevice).all()
     if not devices:
-        return {"known": False, "ok": True, "alerts": [], "devices": []}
+        return {"known": False, "ok": True, "alerts": [], "devices": [], "new_firmware": None}
 
     summary = []
     all_alerts = []
@@ -861,9 +861,28 @@ def scanner_health(
             "alerts": alerts,
         })
 
+    # Собранная, но ещё не установленная прошивка. Без этого о новой сборке
+    # узнаёшь, только случайно заглянув на страницу сканера: автосборка кладёт
+    # файл молча, а сама себя на устройство она намеренно не ставит.
+    newest = db.query(models.ScannerFirmware).order_by(
+        models.ScannerFirmware.uploaded_at.desc()
+    ).first()
+    new_firmware = None
+    if newest:
+        installed = {d.fw_version for d in devices if d.fw_version}
+        assigned = {d.target_firmware_id for d in devices if d.target_firmware_id}
+        if newest.version not in installed and newest.id not in assigned:
+            new_firmware = {
+                "version": newest.version,
+                "notes": newest.notes,
+                "uploaded_by": newest.uploaded_by,
+                "uploaded_at": newest.uploaded_at,
+            }
+
     return {
         "known": True,
         "ok": not all_alerts,
         "alerts": all_alerts,
         "devices": summary,
+        "new_firmware": new_firmware,
     }

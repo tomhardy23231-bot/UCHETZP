@@ -523,10 +523,14 @@ const FirmwareSection = ({ device, builds, onUpload, onDelete, onAssign, onCance
         <p className="text-sm text-slate-400">Сборок пока нет.</p>
       ) : (
         <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
-          {builds.map((b) => {
+          {builds.map((b, index) => {
             const current = b.version === device.fw_version;
+            // Самая свежая загруженная сборка, которую ещё не поставили.
+            // Список отсортирован новыми вверх, поэтому это просто первая.
+            const fresh = index === 0 && !current && device.target_firmware_id !== b.id;
             return (
-              <div key={b.id} className="flex items-center gap-3 px-4 py-2.5 bg-white">
+              <div key={b.id}
+                   className={`flex items-center gap-3 px-4 py-2.5 ${fresh ? 'bg-blue-50/50' : 'bg-white'}`}>
                 <HardDrive size={14} className="text-slate-300 flex-shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
@@ -534,6 +538,11 @@ const FirmwareSection = ({ device, builds, onUpload, onDelete, onAssign, onCance
                     {current && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                         стоит сейчас
+                      </span>
+                    )}
+                    {fresh && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                        новая, не установлена
                       </span>
                     )}
                   </div>

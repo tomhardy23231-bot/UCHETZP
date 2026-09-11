@@ -5,7 +5,7 @@
 // есть что чинить.
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ScanLine, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ScanLine, ChevronRight, UploadCloud } from 'lucide-react';
 import { getScannerHealth } from '../api/client';
 
 const CHECK_MS = 60000;
@@ -29,7 +29,33 @@ const ScannerHealthBanner = () => {
     return () => { stopped = true; clearInterval(timer); };
   }, []);
 
-  if (!health || !health.known || health.ok) return null;
+  if (!health || !health.known) return null;
+
+  // Когда со сканером всё хорошо, плашка молчит — кроме одного случая: собрана
+  // новая прошивка, а её ещё не поставили. Это не проблема, поэтому вид
+  // спокойный, без красного.
+  if (health.ok) {
+    const fw = health.new_firmware;
+    if (!fw) return null;
+    return (
+      <Link
+        to="/scanner"
+        className="group flex items-start gap-3 px-4 py-3 mb-5 rounded-lg border bg-blue-50 border-blue-200 transition-colors hover:brightness-[0.98]"
+      >
+        <UploadCloud size={16} className="text-blue-600 mt-0.5 flex-shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-blue-900 flex items-center gap-1.5">
+            <ScanLine size={13} />
+            Для сканера собрана прошивка {fw.version}
+          </div>
+          <div className="text-xs text-blue-900 opacity-80 mt-1">
+            {fw.notes ? `${fw.notes} · ` : ''}её ещё не поставили — откройте «Сканер» и нажмите «Поставить»
+          </div>
+        </div>
+        <ChevronRight size={16} className="text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+      </Link>
+    );
+  }
 
   const offline = health.devices.some((d) => d.status === 'offline' || d.status === 'never');
   const tone = offline
