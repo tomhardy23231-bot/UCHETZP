@@ -285,6 +285,9 @@ class ScannerHeartbeatIn(BaseModel):
     reset_reason: Optional[str] = None
     time_synced: Optional[bool] = None
     ota_error: Optional[str] = None   # почему не встало последнее обновление
+    # Дата по часам самого сканера. Сервер живёт в UTC, а отметки пишутся по
+    # местному времени устройства — около полуночи даты разъехались бы.
+    local_date: Optional[str] = None
 
 
 class ScannerCommandOut(BaseModel):
@@ -310,6 +313,10 @@ class ScannerHeartbeatOut(BaseModel):
     commands: List[ScannerCommandOut] = []
     ota: Optional[ScannerOtaOut] = None
     next_heartbeat_sec: int
+    # {"known": [...], "leaving": [...]} — какие карты система знает и по каким
+    # следующая отметка станет уходом. Нужно, чтобы сканер играл нужную реплику
+    # сразу, а не после ответа сервера.
+    cards: Optional[dict] = None
 
 
 class ScannerCommandResult(BaseModel):

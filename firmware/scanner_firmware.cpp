@@ -18,12 +18,15 @@
 #include <HTTPUpdate.h>
 #include <ArduinoJson.h>
 #include <esp_system.h>
+#include <vector>
 #include "sound_bark.h"
+#include "sound_privet.h"
+#include "sound_bay.h"
 
 // Версия прошивки. Её же указывают при загрузке .bin в админке: сервер сравнивает
 // её с тем, что пришло в heartbeat, и так понимает, доехало обновление или нет.
 // Меняете прошивку — поднимайте версию, иначе обновление будет крутиться по кругу.
-#define FW_VERSION "2.2.0"
+#define FW_VERSION "2.3.0"
 
 #define CTRL_PIN 17 
 #define BATT_PIN 4 
@@ -131,7 +134,9 @@ volatile bool identifyRequested = false;
 // Мелодия успеха играется блокирующе почти секунду. Если запускать её прямо в
 // обработчике карты, человек сначала слушает музыку и только потом видит
 // зелёный экран. Поэтому ставим флаг, а играем после отрисовки.
-bool pendingSuccessMelody = false;
+// Какую реплику проиграть после отрисовки экрана.
+enum PendingSound { SND_NONE, SND_IN, SND_OUT, SND_NEUTRAL };
+PendingSound pendingSuccessSound = SND_NONE;
 // Периферия поднята. До этого звук и ленту трогать нельзя: при ночном
 // пробуждении мы их намеренно не инициализируем.
 bool peripheralsReady = false;
@@ -142,6 +147,18 @@ RTC_DATA_ATTR int  rtcOtaFails = 0;        // сколько раз подряд
 RTC_DATA_ATTR char rtcOtaVersion[24] = "";
 RTC_DATA_ATTR char rtcOtaError[96] = "";   // текст последней ошибки OTA — уедет в админку
 
+// Карты, которые система знает, и те, по которым следующая отметка станет
+// уходом. Приезжают с каждым heartbeat, чтобы сканер решал сам и говорил сразу,
+// не дожидаясь ответа сервера — иначе приветствие опаздывало бы на секунду.
+//
+// Ошибиться списки практически не дают: повторная отметка той же картой
+// возможна не раньше окна дебаунса (5 минут), а обновляются они каждые 30 с.
+std::vector<String> knownCards;
+std::vector<String> leavingCards;
+// Списки пишет фоновая задача на нулевом ядре, а читает обработчик карты на
+// первом. Без мьютекса чтение во время подмены — гонка и падение.
+SemaphoreHandle_t cardsMutex;
+
 // Нота мелодии. Объявлена здесь, а не рядом с самими мелодиями, потому что
 // Arduino IDE генерирует прототипы всех функций сама и вставляет их перед
 // первой функцией файла. Прототип playMelody(const Note*) оказался бы выше
@@ -151,6 +168,11 @@ struct Note { float freq; int ms; };
 // Прототипы: часть функций вызывается раньше, чем определена.
 void playMelody(const Note* notes, int count);
 void playSample(const int16_t* data, int count);
+bool cardIsKnown(const String& card);
+bool cardWillLeave(const String& card);
+bool cardListsReady();
+void markCardLeaving(const String& card, bool leaving);
+bool listHasCard(const std::vector<String>& list, const String& card);
 void syncTaskCode(void * pvParameters);
 void processOfflineBuffer();
 int  countOfflineLines();
@@ -499,6 +521,61 @@ int countOfflineLines() {
   return count;
 }
 
+// ========== КАРТЫ: ПРИХОД ИЛИ УХОД ==========
+
+bool listHasCard(const std::vector<String>& list, const String& card) {
+  for (size_t i = 0; i < list.size(); i++) if (list[i] == card) return true;
+  return false;
+}
+
+bool cardIsKnown(const String& card) {
+  bool res = false;
+  if (cardsMutex && xSemaphoreTake(cardsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    // Пустой список означает «сервер ещё не присылал» — не повод объявлять
+    // карту чужой и отказывать человеку в отметке.
+    res = knownCards.empty() || listHasCard(knownCards, card);
+    xSemaphoreGive(cardsMutex);
+  } else {
+    res = true;
+  }
+  return res;
+}
+
+bool cardWillLeave(const String& card) {
+  bool res = false;
+  if (cardsMutex && xSemaphoreTake(cardsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    res = listHasCard(leavingCards, card);
+    xSemaphoreGive(cardsMutex);
+  }
+  return res;
+}
+
+// Пока списков нет, направление угадывать нельзя: скажем нейтральным писком.
+bool cardListsReady() {
+  bool res = false;
+  if (cardsMutex && xSemaphoreTake(cardsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    res = !knownCards.empty();
+    xSemaphoreGive(cardsMutex);
+  }
+  return res;
+}
+
+// После отметки поправляем список сами: сервер пришлёт свой через полминуты,
+// а отметиться повторно можно только через окно дебаунса.
+void markCardLeaving(const String& card, bool leaving) {
+  if (!cardsMutex || xSemaphoreTake(cardsMutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+  bool present = listHasCard(leavingCards, card);
+  if (leaving && !present) {
+    leavingCards.push_back(card);
+  } else if (!leaving && present) {
+    for (size_t i = 0; i < leavingCards.size(); i++) {
+      if (leavingCards[i] == card) { leavingCards.erase(leavingCards.begin() + i); break; }
+    }
+  }
+  xSemaphoreGive(cardsMutex);
+}
+
+
 // ========== КОНФИГ ==========
 
 void applyConfig() {
@@ -814,6 +891,17 @@ bool heartbeatExchange(const char* mode) {
   doc["uptime_sec"]      = (uint32_t)(millis() / 1000UL);
   doc["reset_reason"]    = resetReasonName();
   doc["time_synced"]     = isTimeSynced();
+
+  // Свою дату сообщаем сами: сервер живёт в UTC, а отметки пишутся по местному
+  // времени сканера. Около полуночи даты разошлись бы, и список «кто на работе»
+  // пришёл бы не за тот день.
+  struct tm lt;
+  if (getLocalTime(&lt, 10) && lt.tm_year > 120) {
+    char localDate[11];
+    snprintf(localDate, sizeof(localDate), "%04d-%02d-%02d",
+             lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+    doc["local_date"] = localDate;
+  }
   if (rtcOtaError[0]) doc["ota_error"] = rtcOtaError;
 
   String body; serializeJson(doc, body);
@@ -849,6 +937,27 @@ bool heartbeatExchange(const char* mode) {
   if (!ota.isNull()) {
     doPullOta(ota["version"] | "", ota["url"] | "");
     return true;
+  }
+
+  // Списки карт: по ним сканер сам решает, приветствовать или прощаться.
+  JsonObject cards = resp["cards"].as<JsonObject>();
+  if (!cards.isNull()) {
+    std::vector<String> freshKnown, freshLeaving;
+    for (JsonVariant v : cards["known"].as<JsonArray>()) {
+      const char* c = v.as<const char*>();
+      if (c) freshKnown.push_back(String(c));
+    }
+    for (JsonVariant v : cards["leaving"].as<JsonArray>()) {
+      const char* c = v.as<const char*>();
+      if (c) freshLeaving.push_back(String(c));
+    }
+    // Собираем во временные списки и подменяем одним движением под мьютексом:
+    // читатель на другом ядре не должен застать список полупустым.
+    if (cardsMutex && xSemaphoreTake(cardsMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+      knownCards.swap(freshKnown);
+      leavingCards.swap(freshLeaving);
+      xSemaphoreGive(cardsMutex);
+    }
   }
 
   for (JsonVariant item : resp["commands"].as<JsonArray>()) {
@@ -888,6 +997,7 @@ void nightCheckinRoutine() {
   LittleFS.begin(true);
   if (fileMutex == NULL) fileMutex = xSemaphoreCreateMutex();
   if (netMutex == NULL) netMutex = xSemaphoreCreateMutex();
+  if (cardsMutex == NULL) cardsMutex = xSemaphoreCreateMutex();
   loadConfig();
   offlineCount = countOfflineLines();
   hasOfflineData = (offlineCount > 0);
@@ -985,6 +1095,7 @@ void setup() {
   LittleFS.begin(true);
   fileMutex = xSemaphoreCreateMutex();
   netMutex = xSemaphoreCreateMutex();
+  cardsMutex = xSemaphoreCreateMutex();
   scanQueue = xQueueCreate(10, sizeof(ScanEvent)); 
 
   xSemaphoreTake(fileMutex, portMAX_DELAY);
@@ -1269,7 +1380,18 @@ void loop() {
           strcpy(newScan.timestamp, iso);
           
           if (xQueueSend(scanQueue, &newScan, 0) != pdTRUE) saveToOffline(newScan.rfid, newScan.timestamp);
-          currentScreen = SUCCESS_SCREEN; forceRedraw = true; screenTimer = nowMs; pendingSuccessMelody = true;
+          // Что сказать, решаем прямо здесь: список приехал заранее, поэтому
+          // реплика звучит сразу, а не через секунду после ответа сервера.
+          if (!cardListsReady()) {
+            pendingSuccessSound = SND_NEUTRAL;
+          } else if (cardWillLeave(rfidBuffer)) {
+            pendingSuccessSound = SND_OUT;
+            markCardLeaving(rfidBuffer, false);
+          } else {
+            pendingSuccessSound = SND_IN;
+            markCardLeaving(rfidBuffer, true);
+          }
+          currentScreen = SUCCESS_SCREEN; forceRedraw = true; screenTimer = nowMs;
         }
       }
       rfidBuffer = ""; 
@@ -1321,9 +1443,12 @@ void loop() {
         u8g2Fonts.setCursor(15, 30); u8g2Fonts.print("ОТМЕТКА"); u8g2Fonts.setCursor(25, 45); u8g2Fonts.print("ПРИНЯТА!"); u8g2Fonts.setCursor(15, 75); u8g2Fonts.print("ВАШЕ ВРЕМЯ:");
         if (refreshLocalTime()) { sprintf(timeStr, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min); tft.setTextColor(ST77XX_BLACK); tft.setTextSize(3); tft.setCursor(20, 90); tft.print(timeStr); }
         forceRedraw = false;
-        if (pendingSuccessMelody) {
-          pendingSuccessMelody = false;
-          beepSuccess();
+        if (pendingSuccessSound != SND_NONE) {
+          PendingSound snd = pendingSuccessSound;
+          pendingSuccessSound = SND_NONE;
+          if (snd == SND_IN)       playSample(SOUND_PRIVET, SOUND_PRIVET_LEN);
+          else if (snd == SND_OUT) playSample(SOUND_BAY, SOUND_BAY_LEN);
+          else                     beepSuccess();
           // Отсчёт показа экрана — с конца мелодии, иначе она съела бы почти
           // секунду из тех 1.7 с, что экран висит перед глазами.
           screenTimer = millis();

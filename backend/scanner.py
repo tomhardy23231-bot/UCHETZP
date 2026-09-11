@@ -97,6 +97,44 @@ def load_config(device: models.ScannerDevice) -> dict:
     return cfg
 
 
+def build_card_lists(db: Session, local_date: Optional[str]) -> dict:
+    """Карты, которые сканер должен различать.
+
+    Устройство само не знает, приход это или уход — решает сервер по тому, есть
+    ли отметка за сегодня. Но ждать ответа сервера, чтобы заговорить, нельзя:
+    ответ приходит через полсекунды-секунду, и приветствие опаздывало бы.
+    Поэтому раз в heartbeat отдаём два списка, и сканер решает мгновенно.
+
+    Ошибиться он практически не может: повторная отметка той же картой
+    возможна не раньше чем через окно дебаунса (по умолчанию 5 минут), а списки
+    обновляются каждые 30 секунд.
+
+    "leaving" — карты, у которых на сегодня уже есть запись: следующая отметка
+    по ним станет уходом. Запись с проставленным временем ухода тоже сюда
+    попадает: сервер в этом случае перезаписывает уход, а не делает приход.
+
+    Дату берём ту, что прислало устройство: сервер живёт в UTC, отметки пишутся
+    по местному времени сканера, и около полуночи даты разошлись бы.
+    """
+    day = local_date or datetime.now().strftime("%Y-%m-%d")
+
+    employees = db.query(models.Employee.id, models.Employee.card_id).filter(
+        models.Employee.card_id.isnot(None),
+        models.Employee.card_id != "",
+    ).all()
+    card_by_employee = {e.id: e.card_id for e in employees}
+
+    marked_today = db.query(models.Attendance.employee_id).filter(
+        models.Attendance.date == day
+    ).distinct().all()
+    leaving = {card_by_employee[r[0]] for r in marked_today if r[0] in card_by_employee}
+
+    return {
+        "known": sorted(card_by_employee.values()),
+        "leaving": sorted(leaving),
+    }
+
+
 # ========== АВТОРИЗАЦИЯ УСТРОЙСТВА ==========
 
 def _expected_device_key() -> str:
@@ -475,6 +513,7 @@ def scanner_heartbeat(
 
     next_sec = int(cfg.get("heartbeat_sec") or 30)
     return schemas.ScannerHeartbeatOut(
+        cards=build_card_lists(db, hb.local_date),
         server_time=now,
         config_version=device_config_version,
         config=config_payload,
