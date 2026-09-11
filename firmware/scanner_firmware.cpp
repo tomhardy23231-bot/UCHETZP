@@ -141,7 +141,14 @@ RTC_DATA_ATTR int  rtcOtaFails = 0;        // сколько раз подряд
 RTC_DATA_ATTR char rtcOtaVersion[24] = "";
 RTC_DATA_ATTR char rtcOtaError[96] = "";   // текст последней ошибки OTA — уедет в админку
 
+// Нота мелодии. Объявлена здесь, а не рядом с самими мелодиями, потому что
+// Arduino IDE генерирует прототипы всех функций сама и вставляет их перед
+// первой функцией файла. Прототип playMelody(const Note*) оказался бы выше
+// объявления структуры, и сборка падала бы на «'Note' does not name a type».
+struct Note { float freq; int ms; };
+
 // Прототипы: часть функций вызывается раньше, чем определена.
+void playMelody(const Note* notes, int count);
 void syncTaskCode(void * pvParameters);
 void processOfflineBuffer();
 int  countOfflineLines();
@@ -251,8 +258,6 @@ void playI2STone(float frequency, int duration_ms) {
 // ========== МЕЛОДИЯ УСПЕШНОЙ ОТМЕТКИ ==========
 // Какую мелодию играть: 1, 2 или 3. Описание — у массивов ниже.
 #define SUCCESS_MELODY 1
-
-struct Note { float freq; int ms; };
 
 // Нота без хвоста тишины. playI2STone() доливает в конце 4096 отсчётов тишины
 // (четверть секунды при 16 кГц) — для одиночного писка это незаметно, а в
