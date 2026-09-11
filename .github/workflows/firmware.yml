@@ -20,6 +20,7 @@ on:
     branches: [main]
     paths:
       - 'firmware/scanner_firmware.cpp'
+      - 'firmware/*.h'
       - '.github/workflows/firmware.yml'
   workflow_dispatch:
 
@@ -92,6 +93,8 @@ jobs:
             exit 1
           fi
           mkdir -p sketch/scanner_firmware
+          # Звук успешной отметки лежит отдельным заголовком рядом с прошивкой.
+          cp firmware/sound_bark.h sketch/scanner_firmware/
           # Подставляем через переменную окружения, а не аргументом: так ключ
           # не попадает ни в лог команд, ни в список процессов.
           DEVICE_KEY="$DEVICE_KEY" perl -pe 's/"CHANGE-ME"/"$ENV{DEVICE_KEY}"/' \

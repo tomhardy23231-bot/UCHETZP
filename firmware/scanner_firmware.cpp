@@ -18,11 +18,12 @@
 #include <HTTPUpdate.h>
 #include <ArduinoJson.h>
 #include <esp_system.h>
+#include "sound_bark.h"
 
 // Версия прошивки. Её же указывают при загрузке .bin в админке: сервер сравнивает
 // её с тем, что пришло в heartbeat, и так понимает, доехало обновление или нет.
 // Меняете прошивку — поднимайте версию, иначе обновление будет крутиться по кругу.
-#define FW_VERSION "2.1.0"
+#define FW_VERSION "2.2.0"
 
 #define CTRL_PIN 17 
 #define BATT_PIN 4 
@@ -149,6 +150,7 @@ struct Note { float freq; int ms; };
 
 // Прототипы: часть функций вызывается раньше, чем определена.
 void playMelody(const Note* notes, int count);
+void playSample(const int16_t* data, int count);
 void syncTaskCode(void * pvParameters);
 void processOfflineBuffer();
 int  countOfflineLines();
@@ -255,9 +257,13 @@ void playI2STone(float frequency, int duration_ms) {
   }
 }
 
-// ========== МЕЛОДИЯ УСПЕШНОЙ ОТМЕТКИ ==========
-// Какую мелодию играть: 1, 2 или 3. Описание — у массивов ниже.
-#define SUCCESS_MELODY 1
+// ========== ЗВУК УСПЕШНОЙ ОТМЕТКИ ==========
+// Что играть при успешной отметке:
+//   0 — записанный лай собаки (sound_bark.h)
+//   1 — восходящее арпеджио до-мажор, спокойное
+//   2 — бодрее, как в игровых интерфейсах
+//   3 — мягкое, без резкого верха
+#define SUCCESS_SOUND 0
 
 // Нота без хвоста тишины. playI2STone() доливает в конце 4096 отсчётов тишины
 // (четверть секунды при 16 кГц) — для одиночного писка это незаметно, а в
@@ -313,6 +319,25 @@ const Note MELODY_SOFT[] = {
   {1567.98f, 480},   // соль6, с удержанием
 };
 
+// Проигрывает записанный звук. Частота массива совпадает с частотой I2S,
+// поэтому отсчёты уходят как есть, без пересчёта. Громкость — та же, что у
+// мелодий: значение из настроек панели.
+void playSample(const int16_t* data, int count) {
+  if (!peripheralsReady) return;
+
+  size_t bytes_written;
+  for (int i = 0; i < count; i++) {
+    int16_t v = (int16_t)(((int32_t)data[i] * currentVolume) >> 15);
+    uint32_t sample_32 = ((uint32_t)(uint16_t)v << 16) | (uint16_t)v;
+    i2s_channel_write(tx_chan, &sample_32, sizeof(sample_32), &bytes_written, portMAX_DELAY);
+  }
+
+  uint32_t silence = 0;
+  for (int i = 0; i < 2048; i++) {
+    i2s_channel_write(tx_chan, &silence, sizeof(silence), &bytes_written, portMAX_DELAY);
+  }
+}
+
 void playMelody(const Note* notes, int count) {
   if (!peripheralsReady) return;
   for (int i = 0; i < count; i++) playNote(notes[i].freq, notes[i].ms);
@@ -327,12 +352,14 @@ void playMelody(const Note* notes, int count) {
 }
 
 void beepSuccess() {
-#if SUCCESS_MELODY == 2
+#if SUCCESS_SOUND == 1
+  playMelody(MELODY_CONFIRM, sizeof(MELODY_CONFIRM) / sizeof(Note));
+#elif SUCCESS_SOUND == 2
   playMelody(MELODY_WIN, sizeof(MELODY_WIN) / sizeof(Note));
-#elif SUCCESS_MELODY == 3
+#elif SUCCESS_SOUND == 3
   playMelody(MELODY_SOFT, sizeof(MELODY_SOFT) / sizeof(Note));
 #else
-  playMelody(MELODY_CONFIRM, sizeof(MELODY_CONFIRM) / sizeof(Note));
+  playSample(SOUND_BARK, SOUND_BARK_LEN);
 #endif
 }
 void beepError() { playI2STone(500.0, 150); vTaskDelay(200 / portTICK_PERIOD_MS); playI2STone(500.0, 150); }
