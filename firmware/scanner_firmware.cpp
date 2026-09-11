@@ -26,7 +26,7 @@
 // Версия прошивки. Её же указывают при загрузке .bin в админке: сервер сравнивает
 // её с тем, что пришло в heartbeat, и так понимает, доехало обновление или нет.
 // Меняете прошивку — поднимайте версию, иначе обновление будет крутиться по кругу.
-#define FW_VERSION "2.3.0"
+#define FW_VERSION "2.4.0"
 
 #define CTRL_PIN 17 
 #define BATT_PIN 4 
@@ -158,6 +158,17 @@ std::vector<String> leavingCards;
 // Списки пишет фоновая задача на нулевом ядре, а читает обработчик карты на
 // первом. Без мьютекса чтение во время подмены — гонка и падение.
 SemaphoreHandle_t cardsMutex;
+
+// Своя отметка о только что приложенной карте. Сервер о ней узнаёт через
+// доли секунды, а список приезжает по расписанию — и ответ, собранный до
+// отметки, затирал бы наше знание о ней. С коротким окном дебаунса это ловилось
+// руками: приложил дважды, а сканер оба раза здоровается.
+struct LocalMark { String card; bool leaving; unsigned long at; };
+std::vector<LocalMark> localMarks;
+// Дольше держать смысла нет: за две минуты сервер точно узнает об отметке.
+const unsigned long LOCAL_MARK_TTL = 120000;
+// Экран ошибки один, а причин две — надо знать, что писать.
+bool errorCardUnknown = false;
 
 // Нота мелодии. Объявлена здесь, а не рядом с самими мелодиями, потому что
 // Arduino IDE генерирует прототипы всех функций сама и вставляет их перед
@@ -544,7 +555,17 @@ bool cardIsKnown(const String& card) {
 bool cardWillLeave(const String& card) {
   bool res = false;
   if (cardsMutex && xSemaphoreTake(cardsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-    res = listHasCard(leavingCards, card);
+    // Свежая своя отметка важнее списка с сервера: список мог быть собран до
+    // того, как отметка до сервера доехала.
+    bool found = false;
+    for (size_t i = 0; i < localMarks.size(); i++) {
+      if (localMarks[i].card == card && millis() - localMarks[i].at < LOCAL_MARK_TTL) {
+        res = localMarks[i].leaving;
+        found = true;
+        break;
+      }
+    }
+    if (!found) res = listHasCard(leavingCards, card);
     xSemaphoreGive(cardsMutex);
   }
   return res;
@@ -564,14 +585,18 @@ bool cardListsReady() {
 // а отметиться повторно можно только через окно дебаунса.
 void markCardLeaving(const String& card, bool leaving) {
   if (!cardsMutex || xSemaphoreTake(cardsMutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
-  bool present = listHasCard(leavingCards, card);
-  if (leaving && !present) {
-    leavingCards.push_back(card);
-  } else if (!leaving && present) {
-    for (size_t i = 0; i < leavingCards.size(); i++) {
-      if (leavingCards[i] == card) { leavingCards.erase(leavingCards.begin() + i); break; }
+
+  unsigned long now = millis();
+  // Заодно выбрасываем протухшие: список маленький, чистить его отдельно незачем.
+  for (size_t i = localMarks.size(); i > 0; i--) {
+    size_t k = i - 1;
+    if (localMarks[k].card == card || now - localMarks[k].at >= LOCAL_MARK_TTL) {
+      localMarks.erase(localMarks.begin() + k);
     }
   }
+  LocalMark m; m.card = card; m.leaving = leaving; m.at = now;
+  localMarks.push_back(m);
+
   xSemaphoreGive(cardsMutex);
 }
 
@@ -1365,6 +1390,7 @@ void loop() {
         }
         if (recentScans.count(rfidBuffer) && (nowMs - recentScans[rfidBuffer] < debounceMs)) {
           if (nowMs - recentScans[rfidBuffer] < 4000) { rfidBuffer = ""; continue; } 
+          errorCardUnknown = false;
           currentScreen = ERROR_SCREEN; forceRedraw = true; screenTimer = nowMs;
           recentScans[rfidBuffer] = nowMs; beepError(); 
         } else {
@@ -1379,7 +1405,20 @@ void loop() {
           strcpy(newScan.rfid, rfidBuffer.c_str());
           strcpy(newScan.timestamp, iso);
           
+          // Отправляем даже чужую карту: по ней в панели заводят нового
+          // сотрудника, там для этого показывается последняя приложенная.
           if (xQueueSend(scanQueue, &newScan, 0) != pdTRUE) saveToOffline(newScan.rfid, newScan.timestamp);
+
+          if (cardListsReady() && !cardIsKnown(rfidBuffer)) {
+            // Карты нет ни за кем. Здороваться с чужим человеком и показывать
+            // ему «отметка принята» — враньё: сервер такую отметку не запишет.
+            errorCardUnknown = true;
+            currentScreen = ERROR_SCREEN; forceRedraw = true; screenTimer = nowMs;
+            beepError();
+            rfidBuffer = "";
+            continue;
+          }
+
           // Что сказать, решаем прямо здесь: список приехал заранее, поэтому
           // реплика звучит сразу, а не через секунду после ответа сервера.
           if (!cardListsReady()) {
@@ -1458,7 +1497,14 @@ void loop() {
     else if (currentScreen == ERROR_SCREEN) {
       if (forceRedraw) {
         tft.fillScreen(ST77XX_RED); u8g2Fonts.setFont(u8g2_font_cu12_t_cyrillic); u8g2Fonts.setForegroundColor(ST77XX_WHITE); u8g2Fonts.setBackgroundColor(ST77XX_RED);
-        u8g2Fonts.setCursor(35, 45); u8g2Fonts.print("ВЫ УЖЕ"); u8g2Fonts.setCursor(20, 65); u8g2Fonts.print("ОТМЕТИЛИСЬ"); forceRedraw = false;
+        if (errorCardUnknown) {
+          u8g2Fonts.setCursor(30, 45); u8g2Fonts.print("КАРТА НЕ");
+          u8g2Fonts.setCursor(25, 65); u8g2Fonts.print("НАЙДЕНА");
+        } else {
+          u8g2Fonts.setCursor(35, 45); u8g2Fonts.print("ВЫ УЖЕ");
+          u8g2Fonts.setCursor(20, 65); u8g2Fonts.print("ОТМЕТИЛИСЬ");
+        }
+        forceRedraw = false;
       }
     }
     else if (currentScreen == MENU_SCREEN) {
