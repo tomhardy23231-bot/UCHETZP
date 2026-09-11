@@ -151,6 +151,7 @@ bool shouldBeAwake(const struct tm& t);
 long secondsUntilWorkStart(const struct tm& t);
 void deepSleepFor(long seconds, bool touchPeripherals);
 void nightCheckinRoutine();
+bool refreshLocalTime();
 time_t utcToEpoch(int y, int mo, int d, int h, int mi, int s);
 time_t parseIsoUtc(const char* s);
 void parseHhMm(const char* s, uint8_t &h, uint8_t &m);
@@ -162,6 +163,22 @@ const char* resetReasonName();
 bool isTimeSynced() {
   struct tm t;
   return (getLocalTime(&t, 10) && t.tm_year > 120);
+}
+
+// Обновляет глобальный timeinfo и говорит, можно ли ему верить.
+//
+// Раньше метка времени отметки бралась из timeinfo, а заполнялся он только
+// внутри проверки сна — раз в 60 секунд, причём впервые лишь через минуту после
+// загрузки. Карта, приложенная в эту первую минуту, получала метку из нулевой
+// структуры: "1900-01-00T00:00:00Z". Нулевой день месяца — невалидная дата,
+// сервер отвергал такую запись навсегда, а прошивка возвращала её в очередь и
+// повторяла каждые 10 секунд до скончания веков.
+//
+// Вызывать только из главного цикла: timeinfo общий, дёргать его ещё и из
+// фоновой задачи — гонка. Фоновой задаче хватает isTimeSynced() с локальной
+// переменной.
+bool refreshLocalTime() {
+  return (getLocalTime(&timeinfo, 10) && timeinfo.tm_year > 120);
 }
 
 void saveToOffline(const char* rfid, const char* timestamp) {
@@ -968,9 +985,17 @@ void processOfflineBuffer() {
       int res = http.POST(finalBody);
       http.end();
 
-      // ИСПРАВЛЕНО: только 2xx считаем успехом. Раньше 4xx тоже удалял запись -> теряли отметки.
+      // Только 2xx считаем успехом: таймаут и 5xx означают «попробуй позже»,
+      // и терять из-за них отметки нельзя.
       if (res >= 200 && res < 300) {
         // Сервер реально принял -> забываем эту строку
+      } else if (res == 422) {
+        // 422 — «я не понимаю эти данные». В отличие от таймаута это не
+        // пройдёт никогда, сколько ни повторяй: одна битая запись иначе
+        // крутится в очереди вечно и забивает сеть. Сервер её у себя
+        // залогировал, так что потеря видима, а не молчалива.
+        Serial.printf("[ОЧЕРЕДЬ] Сервер не понял запись, выбрасываю: %s
+", line.c_str());
       } else {
         // Любая другая ошибка (таймаут, 4xx, 5xx) -> Сохраняем обратно!
         xSemaphoreTake(fileMutex, portMAX_DELAY);
@@ -1117,7 +1142,7 @@ void loop() {
         } else {
           recentScans[rfidBuffer] = nowMs;
           char iso[25];
-          if (isTimeSynced()) {
+          if (refreshLocalTime()) {
             snprintf(iso, sizeof(iso), "%04d-%02d-%02dT%02d:%02d:%02dZ", 
                      timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
           } else { snprintf(iso, sizeof(iso), "MS:%lu", millis()); }
@@ -1151,7 +1176,7 @@ void loop() {
         strcpy(lastTimeStr, ""); forceRedraw = false; FastLED.clear(); FastLED.show();
       }
       drawStatusBar();
-      if (isTimeSynced()) {
+      if (refreshLocalTime()) {
         sprintf(timeStr, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
         if (strcmp(timeStr, lastTimeStr) != 0) {
           tft.fillRect(0, 50, 128, 40, ST77XX_BLACK);
@@ -1177,7 +1202,7 @@ void loop() {
       if (forceRedraw) {
         tft.fillScreen(ST77XX_GREEN); u8g2Fonts.setFont(u8g2_font_cu12_t_cyrillic); u8g2Fonts.setForegroundColor(ST77XX_BLACK); u8g2Fonts.setBackgroundColor(ST77XX_GREEN);
         u8g2Fonts.setCursor(15, 30); u8g2Fonts.print("ОТМЕТКА"); u8g2Fonts.setCursor(25, 45); u8g2Fonts.print("ПРИНЯТА!"); u8g2Fonts.setCursor(15, 75); u8g2Fonts.print("ВАШЕ ВРЕМЯ:");
-        if (isTimeSynced()) { sprintf(timeStr, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min); tft.setTextColor(ST77XX_BLACK); tft.setTextSize(3); tft.setCursor(20, 90); tft.print(timeStr); }
+        if (refreshLocalTime()) { sprintf(timeStr, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min); tft.setTextColor(ST77XX_BLACK); tft.setTextSize(3); tft.setCursor(20, 90); tft.print(timeStr); }
         forceRedraw = false;
       }
     }
