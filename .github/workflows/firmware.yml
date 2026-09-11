@@ -1,0 +1,180 @@
+# Сборка прошивки сканера и отправка её в админку.
+#
+# Зачем: раньше, чтобы обновить сканер, надо было открыть Arduino IDE, руками
+# вписать ключ устройства, собрать, экспортировать .bin и загрузить его в
+# панель. Теперь достаточно запушить изменение прошивки — сборка приедет в
+# раздел «Прошивка по воздуху» сама.
+#
+# Что НЕ делается автоматически: сборка не назначается устройству. Нажать
+# «Поставить» должен человек, посмотрев на версию. Прошивка, которая не выйдет
+# на связь, не откатывается из панели — команду она уже не получит, — поэтому
+# автоматически катить на железо непроверенный образ нельзя.
+#
+# Ключ устройства лежит в секретах репозитория и подставляется в исходник при
+# сборке. В самом коде его нет: репозиторий публичный.
+
+name: Прошивка сканера
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/scanner_firmware.cpp'
+      - '.github/workflows/firmware.yml'
+  workflow_dispatch:
+
+# Если запушили несколько правок подряд — собираем только последнюю.
+concurrency:
+  group: firmware
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Собрать и отправить в панель
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Прочитать версию из исходника
+        id: ver
+        run: |
+          VERSION=$(sed -n 's/^#define FW_VERSION "\(.*\)"/\1/p' firmware/scanner_firmware.cpp)
+          if [ -z "$VERSION" ]; then
+            echo "::error::В firmware/scanner_firmware.cpp не найден #define FW_VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Версия прошивки: $VERSION"
+
+      # Ядро ESP32 весит больше гигабайта — без кеша каждая сборка качала бы его заново.
+      - name: Кеш инструментов Arduino
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-esp32-${{ hashFiles('.github/workflows/firmware.yml') }}
+
+      - name: Установить arduino-cli
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Установить ядро ESP32 и библиотеки
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          # Версию ядра намеренно не закрепляем: на момент настройки актуальна 3.x.
+          # Если однажды выйдет 4.x и сборка сломается — закрепить здесь ту версию,
+          # что напечатана ниже.
+          arduino-cli core install esp32:esp32
+          arduino-cli lib install \
+            "ArduinoJson" \
+            "FastLED" \
+            "Adafruit GFX Library" \
+            "Adafruit ST7735 and ST7789 Library" \
+            "U8g2_for_Adafruit_GFX" \
+            "WiFiManager"
+          echo "### Что установлено" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          arduino-cli core list >> "$GITHUB_STEP_SUMMARY"
+          arduino-cli lib list >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # Arduino IDE собирает только .ino, лежащий в папке с таким же именем.
+      - name: Подготовить скетч и подставить ключ
+        env:
+          DEVICE_KEY: ${{ secrets.SCANNER_DEVICE_KEY }}
+        run: |
+          if [ -z "$DEVICE_KEY" ]; then
+            echo "::error::Не задан секрет SCANNER_DEVICE_KEY"
+            exit 1
+          fi
+          mkdir -p sketch/scanner_firmware
+          # Подставляем через переменную окружения, а не аргументом: так ключ
+          # не попадает ни в лог команд, ни в список процессов.
+          DEVICE_KEY="$DEVICE_KEY" perl -pe 's/"CHANGE-ME"/"$ENV{DEVICE_KEY}"/' \
+            firmware/scanner_firmware.cpp > sketch/scanner_firmware/scanner_firmware.ino
+          if grep -q 'CHANGE-ME' sketch/scanner_firmware/scanner_firmware.ino; then
+            echo "::error::Ключ устройства не подставился — в исходнике нет заглушки CHANGE-ME"
+            exit 1
+          fi
+
+      # Настройки платы те же, с которыми сканер прошивали руками. Особенно
+      # важна схема разделов: min_spiffs даёт два слота приложения по 1.9 МБ,
+      # без этого не работает обновление по воздуху.
+      - name: Собрать
+        run: |
+          arduino-cli compile \
+            --fqbn "esp32:esp32:esp32s3:PartitionScheme=min_spiffs,FlashSize=4M,FlashMode=qio,PSRAM=disabled,CPUFreq=240,USBMode=hwcdc,CDCOnBoot=default,LoopCore=1,EventsCore=1,DebugLevel=none" \
+            --export-binaries \
+            --warnings default \
+            sketch/scanner_firmware
+
+      - name: Проверить образ
+        id: bin
+        run: |
+          BIN=$(find sketch -name 'scanner_firmware.ino.bin' | head -1)
+          if [ -z "$BIN" ]; then
+            echo "::error::Собранный .bin не найден"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$BIN")
+          # Тот же порядок проверок, что и на сервере: образ ESP32 начинается с 0xE9.
+          MAGIC=$(head -c 1 "$BIN" | od -An -tx1 | tr -d ' ')
+          if [ "$MAGIC" != "e9" ]; then
+            echo "::error::Это не образ ESP32 (первый байт $MAGIC вместо e9)"
+            exit 1
+          fi
+          echo "path=$BIN" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Прошивка ${{ steps.ver.outputs.version }}"
+            echo "Размер: $((SIZE / 1024)) КБ"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Кладём файл в артефакты в любом случае — чтобы его можно было забрать
+      # руками, даже если сервер сейчас недоступен.
+      - name: Сохранить .bin в артефакты
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-firmware-${{ steps.ver.outputs.version }}
+          path: ${{ steps.bin.outputs.path }}
+          retention-days: 90
+
+      - name: Отправить в панель
+        env:
+          UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          BIN: ${{ steps.bin.outputs.path }}
+        run: |
+          if [ -z "$UPLOAD_TOKEN" ]; then
+            echo "::error::Не задан секрет FIRMWARE_UPLOAD_TOKEN"
+            exit 1
+          fi
+          NOTES=$(git log -1 --pretty=%s)
+          CODE=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            -X POST https://zp.haskyhub.com/api/scanner/firmware \
+            -H "X-Upload-Token: $UPLOAD_TOKEN" \
+            -F "version=$VERSION" \
+            -F "notes=$NOTES" \
+            -F "file=@$BIN")
+
+          if [ "$CODE" = "201" ]; then
+            echo "Сборка $VERSION загружена в панель."
+            {
+              echo ""
+              echo "Загружена в панель. Осталось нажать «Поставить» на странице «Сканер»."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$CODE" = "409" ]; then
+            echo "::error::Версия $VERSION уже загружена. Поднимите FW_VERSION в firmware/scanner_firmware.cpp — иначе панель не увидит, что сборка новая, и обновление не запустится."
+            exit 1
+          fi
+
+          echo "::error::Сервер ответил $CODE"
+          cat /tmp/resp.json
+          exit 1
