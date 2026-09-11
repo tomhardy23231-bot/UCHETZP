@@ -151,6 +151,13 @@ bool shouldBeAwake(const struct tm& t);
 long secondsUntilWorkStart(const struct tm& t);
 void deepSleepFor(long seconds, bool touchPeripherals);
 void nightCheckinRoutine();
+time_t utcToEpoch(int y, int mo, int d, int h, int mi, int s);
+time_t parseIsoUtc(const char* s);
+void parseHhMm(const char* s, uint8_t &h, uint8_t &m);
+bool heartbeatExchange(const char* mode);
+void applyServerConfig(JsonObject srcCfg, uint32_t newVersion);
+void loadConfig();
+const char* resetReasonName();
 
 bool isTimeSynced() {
   struct tm t;
@@ -305,7 +312,7 @@ void onWiFiEvent(WiFiEvent_t event) {
 
 // Секунды от эпохи для даты в UTC. Своё, потому что mktime() на ESP32 считает
 // в локальном поясе, а сервер присылает время в UTC.
-static time_t utcToEpoch(int y, int mo, int d, int h, int mi, int s) {
+time_t utcToEpoch(int y, int mo, int d, int h, int mi, int s) {
   y -= (mo <= 2);
   int era = (y >= 0 ? y : y - 399) / 400;
   unsigned yoe = (unsigned)(y - era * 400);
@@ -315,14 +322,14 @@ static time_t utcToEpoch(int y, int mo, int d, int h, int mi, int s) {
   return (time_t)days * 86400L + h * 3600L + mi * 60L + s;
 }
 
-static time_t parseIsoUtc(const char* s) {
+time_t parseIsoUtc(const char* s) {
   int Y, Mo, D, H, Mi, S;
   if (!s) return 0;
   if (sscanf(s, "%d-%d-%dT%d:%d:%d", &Y, &Mo, &D, &H, &Mi, &S) != 6) return 0;
   return utcToEpoch(Y, Mo, D, H, Mi, S);
 }
 
-static void parseHhMm(const char* s, uint8_t &h, uint8_t &m) {
+void parseHhMm(const char* s, uint8_t &h, uint8_t &m) {
   int hh, mm;
   if (!s) return;
   if (sscanf(s, "%d:%d", &hh, &mm) != 2) return;
@@ -656,7 +663,7 @@ void doPullOta(const char* version, const char* path) {
 
 // Единственный способ для сервера что-то нам сказать: своего адреса у сканера
 // нет, наружу он ходит только сам.
-static bool heartbeatExchange(const char* mode) {
+bool heartbeatExchange(const char* mode) {
   JsonDocument doc;
   doc["device_id"]       = DEVICE_ID;
   doc["fw_version"]      = FW_VERSION;
