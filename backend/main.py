@@ -4,6 +4,9 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -749,6 +752,47 @@ def _write_log(db: Session, *, card_id: str, scan_timestamp, employee, status_st
         db.commit()
     except Exception:
         db.rollback()
+
+
+# Сканер не показывает ответы сервера и не запоминает их: для него любой не-2xx —
+# просто «не прошло, кладу обратно в очередь». Поэтому запрос, который сервер не
+# смог разобрать, выглядит как полная тишина — устройство часами долбится впустую,
+# а в журнале пусто. Один раз это уже стоило суток потерянных отметок, поэтому
+# такие случаи пишем в тот же журнал, что и обычные ошибки сканирования.
+#
+# Не чаще раза в минуту: сканер прогоняет всю офлайн-очередь каждые 10 секунд и
+# при системной ошибке формата завалил бы таблицу тысячами одинаковых строк.
+_LAST_VALIDATION_LOG = {"at": None}
+_VALIDATION_LOG_GAP_SEC = 60
+
+
+@app.exception_handler(RequestValidationError)
+async def log_unparsable_scanner_requests(request: Request, exc: RequestValidationError):
+    """Логирует запросы сканера, которые не прошли валидацию, и отвечает как обычно."""
+    if request.url.path.startswith("/api/attendance/"):
+        now = datetime.now(timezone.utc)
+        last = _LAST_VALIDATION_LOG["at"]
+        if last is None or (now - last).total_seconds() >= _VALIDATION_LOG_GAP_SEC:
+            _LAST_VALIDATION_LOG["at"] = now
+            try:
+                # Тело уже прочитано при валидации, поэтому доступно из кеша.
+                raw = (await request.body()).decode("utf-8", "replace")[:400]
+            except Exception:
+                raw = "<тело запроса прочитать не удалось>"
+            reason = str(exc.errors())[:300]
+            print(f"[СКАНЕР 422] {request.url.path} тело={raw} причина={reason}", flush=True)
+            db = database.SessionLocal()
+            try:
+                _write_log(
+                    db, card_id="—", scan_timestamp=None, employee=None,
+                    status_str="error", result="error",
+                    message=f"Сканер прислал данные, которые сервер не понял. "
+                            f"Причина: {reason} | Что прислал: {raw}",
+                )
+            finally:
+                db.close()
+
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
 
 @app.post("/api/attendance/scan", status_code=status.HTTP_200_OK)
