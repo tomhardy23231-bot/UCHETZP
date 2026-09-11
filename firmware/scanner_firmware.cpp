@@ -127,6 +127,10 @@ volatile bool forceFlushQueue = false;
 // Команда identify: пищать и мигать должен loop() — он владеет экраном, звуком
 // и лентой. Дёргать их из фоновой задачи значит драться за SPI и I2S.
 volatile bool identifyRequested = false;
+// Мелодия успеха играется блокирующе почти секунду. Если запускать её прямо в
+// обработчике карты, человек сначала слушает музыку и только потом видит
+// зелёный экран. Поэтому ставим флаг, а играем после отрисовки.
+bool pendingSuccessMelody = false;
 // Периферия поднята. До этого звук и ленту трогать нельзя: при ночном
 // пробуждении мы их намеренно не инициализируем.
 bool peripheralsReady = false;
@@ -152,6 +156,7 @@ long secondsUntilWorkStart(const struct tm& t);
 void deepSleepFor(long seconds, bool touchPeripherals);
 void nightCheckinRoutine();
 bool refreshLocalTime();
+void playNote(float frequency, int duration_ms);
 time_t utcToEpoch(int y, int mo, int d, int h, int mi, int s);
 time_t parseIsoUtc(const char* s);
 void parseHhMm(const char* s, uint8_t &h, uint8_t &m);
@@ -243,7 +248,88 @@ void playI2STone(float frequency, int duration_ms) {
   }
 }
 
-void beepSuccess() { playI2STone(2000.0, 150); }
+// ========== МЕЛОДИЯ УСПЕШНОЙ ОТМЕТКИ ==========
+// Какую мелодию играть: 1, 2 или 3. Описание — у массивов ниже.
+#define SUCCESS_MELODY 1
+
+struct Note { float freq; int ms; };
+
+// Нота без хвоста тишины. playI2STone() доливает в конце 4096 отсчётов тишины
+// (четверть секунды при 16 кГц) — для одиночного писка это незаметно, а в
+// мелодии между нотами повисали бы паузы и она рассыпалась бы на отдельные
+// писки. Длительность округляем вниз до целого числа периодов: тогда волна
+// обрывается в нуле и на стыке нот нет щелчка.
+void playNote(float frequency, int duration_ms) {
+  if (!peripheralsReady || frequency <= 0) return;
+
+  size_t bytes_written;
+  float samplesPerCycle = SAMPLE_RATE / frequency;
+  int cycles = (int)(((SAMPLE_RATE * duration_ms) / 1000.0) / samplesPerCycle);
+  if (cycles < 1) cycles = 1;
+  int total_samples = (int)(cycles * samplesPerCycle);
+
+  float phaseIncrement = (64.0 * frequency) / SAMPLE_RATE;
+  float phase = 0.0;
+  for (int i = 0; i < total_samples; i++) {
+    int tableIndex = (int)phase % 64;
+    int16_t sample_val = (int16_t)((currentVolume * sineTable[tableIndex]) >> 15);
+    uint32_t sample_32 = ((uint32_t)(uint16_t)sample_val << 16) | (uint16_t)sample_val;
+    i2s_channel_write(tx_chan, &sample_32, sizeof(sample_32), &bytes_written, portMAX_DELAY);
+    phase += phaseIncrement;
+  }
+}
+
+// 1 — «Подтверждение». Восходящее арпеджио до-мажор с удержанием последней
+//     ноты. Спокойное и однозначно положительное, ни с чем не спутаешь.
+const Note MELODY_CONFIRM[] = {
+  {1046.50f, 110},   // до6
+  {1318.51f, 110},   // ми6
+  {1567.98f, 110},   // соль6
+  {2093.00f, 420},   // до7, с удержанием
+};
+
+// 2 — «Победа». Бодрее и заметнее, как в игровых интерфейсах. Хорошо слышно
+//     в шумном помещении, но на проходной с большим потоком может надоесть.
+const Note MELODY_WIN[] = {
+  { 783.99f,  80},   // соль5
+  {1046.50f,  80},   // до6
+  {1318.51f,  80},   // ми6
+  {1567.98f, 110},   // соль6
+  {1318.51f,  80},   // ми6
+  {1567.98f, 110},   // соль6
+  {2093.00f, 320},   // до7
+};
+
+// 3 — «Мягкая». Две короткие ноты и одна долгая, без резкого верха.
+//     Самая ненавязчивая, если сканер стоит рядом с рабочими местами.
+const Note MELODY_SOFT[] = {
+  { 987.77f, 120},   // си5
+  {1318.51f, 120},   // ми6
+  {1567.98f, 480},   // соль6, с удержанием
+};
+
+void playMelody(const Note* notes, int count) {
+  if (!peripheralsReady) return;
+  for (int i = 0; i < count; i++) playNote(notes[i].freq, notes[i].ms);
+
+  // Хвост тишины один на всю мелодию: дочищаем буфер I2S, чтобы усилитель не
+  // щёлкнул на обрыве.
+  size_t bytes_written;
+  uint32_t silence = 0;
+  for (int i = 0; i < 2048; i++) {
+    i2s_channel_write(tx_chan, &silence, sizeof(silence), &bytes_written, portMAX_DELAY);
+  }
+}
+
+void beepSuccess() {
+#if SUCCESS_MELODY == 2
+  playMelody(MELODY_WIN, sizeof(MELODY_WIN) / sizeof(Note));
+#elif SUCCESS_MELODY == 3
+  playMelody(MELODY_SOFT, sizeof(MELODY_SOFT) / sizeof(Note));
+#else
+  playMelody(MELODY_CONFIRM, sizeof(MELODY_CONFIRM) / sizeof(Note));
+#endif
+}
 void beepError() { playI2STone(500.0, 150); vTaskDelay(200 / portTICK_PERIOD_MS); playI2STone(500.0, 150); }
 void beepNav() { playI2STone(1000.0, 50); } 
 
@@ -1151,7 +1237,7 @@ void loop() {
           strcpy(newScan.timestamp, iso);
           
           if (xQueueSend(scanQueue, &newScan, 0) != pdTRUE) saveToOffline(newScan.rfid, newScan.timestamp);
-          currentScreen = SUCCESS_SCREEN; forceRedraw = true; screenTimer = nowMs; beepSuccess();
+          currentScreen = SUCCESS_SCREEN; forceRedraw = true; screenTimer = nowMs; pendingSuccessMelody = true;
         }
       }
       rfidBuffer = ""; 
@@ -1203,6 +1289,13 @@ void loop() {
         u8g2Fonts.setCursor(15, 30); u8g2Fonts.print("ОТМЕТКА"); u8g2Fonts.setCursor(25, 45); u8g2Fonts.print("ПРИНЯТА!"); u8g2Fonts.setCursor(15, 75); u8g2Fonts.print("ВАШЕ ВРЕМЯ:");
         if (refreshLocalTime()) { sprintf(timeStr, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min); tft.setTextColor(ST77XX_BLACK); tft.setTextSize(3); tft.setCursor(20, 90); tft.print(timeStr); }
         forceRedraw = false;
+        if (pendingSuccessMelody) {
+          pendingSuccessMelody = false;
+          beepSuccess();
+          // Отсчёт показа экрана — с конца мелодии, иначе она съела бы почти
+          // секунду из тех 1.7 с, что экран висит перед глазами.
+          screenTimer = millis();
+        }
       }
     }
     else if (currentScreen == ERROR_SCREEN) {
