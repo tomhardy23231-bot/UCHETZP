@@ -69,6 +69,10 @@ COMMAND_PENDING_TTL_SEC = 24 * 3600
 # иначе набежит 2880 строк в сутки, а для графика хватит одной на 5 минут.
 HISTORY_MIN_GAP_SEC = 300
 HISTORY_RETENTION_DAYS = 14
+# Сервер сам отклоняет отметку, сделанную меньше чем через минуту после
+# предыдущей (см. scan_card_for_attendance). Разрешать сканеру окно короче —
+# значит обещать человеку «до свидания», когда ухода на самом деле не будет.
+MIN_DEBOUNCE_SEC = 60
 
 
 def _now() -> datetime:
@@ -701,8 +705,15 @@ def update_device_config(
         if not 0 <= changes["night_checkin_min"] <= 720:
             raise HTTPException(status_code=400, detail="Ночная проверка связи: от 0 до 720 минут")
     if "debounce_sec" in changes and changes["debounce_sec"] is not None:
-        if not 0 <= changes["debounce_sec"] <= 7200:
-            raise HTTPException(status_code=400, detail="Окно дебаунса: от 0 до 7200 секунд")
+        if not MIN_DEBOUNCE_SEC <= changes["debounce_sec"] <= 7200:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Окно дебаунса: от {MIN_DEBOUNCE_SEC} до 7200 секунд. "
+                       f"Короче {MIN_DEBOUNCE_SEC} с ставить нельзя: сервер всё равно отклонит "
+                       f"отметку, сделанную меньше чем через минуту после предыдущей, "
+                       f"а сканер к тому времени уже скажет «до свидания» — и человек уйдёт, "
+                       f"считая, что отметился.",
+            )
     if "volume_percent" in changes and changes["volume_percent"] is not None:
         if not 0 <= changes["volume_percent"] <= 100:
             raise HTTPException(status_code=400, detail="Громкость: от 0 до 100")

@@ -342,9 +342,12 @@ const SettingsForm = ({ device, onSave, saving }) => {
             className={INPUT}
           />
         </Field>
-        <Field label="Окно дебаунса" hint="секунд, в течение которых повторный скан той же карты игнорируется">
+        <Field
+          label="Окно дебаунса"
+          hint="секунд, в течение которых повторный скан той же карты игнорируется. Меньше 60 нельзя: сервер сам отклоняет отметку раньше чем через минуту после предыдущей, и сканер обещал бы уход, которого не будет"
+        >
           <input
-            type="number" min="0" max="7200" value={form.debounce_sec ?? 300}
+            type="number" min="60" max="7200" value={form.debounce_sec ?? 300}
             onChange={(e) => set('debounce_sec', Number(e.target.value))}
             className={INPUT}
           />
