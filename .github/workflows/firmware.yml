@@ -21,7 +21,9 @@ on:
     paths:
       - 'firmware/scanner_firmware.cpp'
       - 'firmware/*.h'
-      - '.github/workflows/firmware.yml'
+  # Правка самого рецепта сборку не запускает: версия прошивки при этом не
+  # меняется, и загрузка упёрлась бы в «версия уже есть». Проверять изменения
+  # рецепта — кнопкой Run workflow.
   workflow_dispatch:
 
 # Если запушили несколько правок подряд — собираем только последнюю.
@@ -55,7 +57,12 @@ jobs:
           path: |
             ~/.arduino15
             ~/Arduino/libraries
-          key: arduino-esp32-${{ hashFiles('.github/workflows/firmware.yml') }}
+          # Ключ намеренно постоянный, а не хеш файла: раньше любая правка
+          # рецепта обесценивала кеш, и ядро качалось заново по пять минут.
+          # Чтобы принудительно обновить инструменты — поднять номер здесь.
+          key: arduino-esp32-v1
+          restore-keys: |
+            arduino-esp32-
 
       - name: Установить arduino-cli
         uses: arduino/setup-arduino-cli@v2
