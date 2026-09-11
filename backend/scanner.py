@@ -152,6 +152,36 @@ def require_device_key_or_basic(
     )
 
 
+def firmware_uploader(
+    x_upload_token: Optional[str] = Header(None),
+    token: Optional[str] = Depends(auth.oauth2_scheme),
+    db: Session = Depends(database.get_db),
+) -> str:
+    """Кто загружает прошивку: администратор или автосборка.
+
+    Автосборке админский пароль давать незачем — ей нужно ровно одно действие,
+    поэтому у неё свой токен (FIRMWARE_UPLOAD_TOKEN) и никаких других прав.
+    Назначить прошивку устройству она всё равно не может: это по-прежнему
+    решает человек, глядя на собранную версию.
+    """
+    if x_upload_token:
+        expected = os.getenv("FIRMWARE_UPLOAD_TOKEN", "")
+        if expected and hmac.compare_digest(x_upload_token, expected):
+            return "автосборка"
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный токен сборки",
+        )
+
+    user = auth.get_current_user(token=token, db=db)
+    if user.role != models.UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ только для администратора",
+        )
+    return user.username
+
+
 # ========== СОСТОЯНИЕ И ДИАГНОСТИКА ==========
 
 def _wifi_quality(rssi: Optional[int]) -> Optional[int]:
@@ -697,7 +727,7 @@ async def upload_firmware(
     notes: Optional[str] = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(database.get_db),
-    admin: models.User = Depends(auth.require_admin),
+    uploader: str = Depends(firmware_uploader),
 ):
     """Загрузка .bin для обновления по воздуху.
 
@@ -731,7 +761,7 @@ async def upload_firmware(
         md5=hashlib.md5(data).hexdigest(),
         data=data,
         notes=(notes or "").strip() or None,
-        uploaded_by=admin.username,
+        uploaded_by=uploader,
     )
     db.add(fw)
     db.commit()
