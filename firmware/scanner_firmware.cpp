@@ -15,6 +15,14 @@
 #include <WiFiManager.h> 
 #include <esp_sleep.h> 
 #include <ArduinoOTA.h>
+#include <HTTPUpdate.h>
+#include <ArduinoJson.h>
+#include <esp_system.h>
+
+// Версия прошивки. Её же указывают при загрузке .bin в админке: сервер сравнивает
+// её с тем, что пришло в heartbeat, и так понимает, доехало обновление или нет.
+// Меняете прошивку — поднимайте версию, иначе обновление будет крутиться по кругу.
+#define FW_VERSION "2.0.0"
 
 #define CTRL_PIN 17 
 #define BATT_PIN 4 
@@ -22,7 +30,16 @@ int batteryPercent = 0;
 float batteryVoltage = 0.0;        
 unsigned long lastBattCheck = 0;  
 
-const String API_URL_BULK = "https://uche12tzp.vercel.app/api/attendance/bulk-scan";
+// Имя устройства в админке и общий секрет с сервером — тот же, что в переменной
+// окружения SCANNER_DEVICE_KEY. Без совпадающего ключа сервер не примет ни
+// heartbeat, ни отчёт о команде и не отдаст прошивку.
+const char* DEVICE_ID  = "HARIZMA-SCANNER";
+const char* DEVICE_KEY = "CHANGE-ME";
+
+const String API_BASE           = "https://zp.haskyhub.com";
+const String API_URL_BULK       = API_BASE + "/api/attendance/bulk-scan";
+const String API_URL_HEARTBEAT  = API_BASE + "/api/scanner/heartbeat";
+const String API_URL_CMD_RESULT = API_BASE + "/api/scanner/command-result";
 
 #define LED_PIN     15
 #define NUM_LEDS    12
@@ -44,6 +61,10 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 U8G2_FOR_ADAFRUIT_GFX u8g2Fonts; 
 TaskHandle_t SyncTask;
 SemaphoreHandle_t fileMutex;
+// Один сетевой обмен за раз. Досыл очереди идёт в фоновой задаче на ядре 0, а
+// heartbeat перед сном — из главного цикла на ядре 1; две параллельные TLS-сессии
+// ESP32 не тянет по памяти.
+SemaphoreHandle_t netMutex;
 
 struct ScanEvent {
   char rfid[15];
@@ -80,7 +101,56 @@ char timeStr[6];
 char lastTimeStr[6] = ""; 
 
 std::map<String, unsigned long> recentScans;
-const unsigned long DEBOUNCE_TIME = 5 * 60 * 1000;
+// ========== КОНФИГ, УПРАВЛЯЕМЫЙ С СЕРВЕРА ==========
+// Лежит в /config.json на LittleFS, поэтому переживает и перезагрузку, и сон.
+// Сервер присылает его в ответе на heartbeat только когда версия реально
+// поменялась — гонять настройки каждые 30 секунд смысла нет.
+struct ScannerConfig {
+  uint32_t heartbeatSec    = 30;
+  bool     sleepEnabled    = true;
+  uint8_t  workStartHour   = 6,  workStartMin = 0;
+  uint8_t  workEndHour     = 19, workEndMin   = 30;
+  uint8_t  workDaysMask    = 0b00011111;  // бит 0 = Пн ... бит 6 = Вс
+  uint32_t nightCheckinMin = 30;          // 0 — во сне на связь не выходить вообще
+  uint8_t  volumePercent   = 50;
+  uint8_t  ledBrightness   = 100;
+  uint32_t debounceSec     = 300;
+  time_t   noSleepUntil    = 0;           // обслуживание: до этого времени не спать
+  uint32_t version         = 0;           // версия конфига, полученная с сервера
+};
+ScannerConfig cfg;
+
+// Длина очереди — чтобы не перечитывать файл на каждый heartbeat.
+volatile int offlineCount = 0;
+// Команда flush_queue поднимает флаг, а досылает уже фоновая задача.
+volatile bool forceFlushQueue = false;
+// Команда identify: пищать и мигать должен loop() — он владеет экраном, звуком
+// и лентой. Дёргать их из фоновой задачи значит драться за SPI и I2S.
+volatile bool identifyRequested = false;
+// Периферия поднята. До этого звук и ленту трогать нельзя: при ночном
+// пробуждении мы их намеренно не инициализируем.
+bool peripheralsReady = false;
+
+// RTC-память переживает deep sleep, обычные глобальные переменные — нет.
+RTC_DATA_ATTR bool rtcNightMode = false;   // мы внутри цикла ночных проверок связи
+RTC_DATA_ATTR int  rtcOtaFails = 0;        // сколько раз подряд не встала одна и та же сборка
+RTC_DATA_ATTR char rtcOtaVersion[24] = "";
+RTC_DATA_ATTR char rtcOtaError[96] = "";   // текст последней ошибки OTA — уедет в админку
+
+// Прототипы: часть функций вызывается раньше, чем определена.
+void syncTaskCode(void * pvParameters);
+void processOfflineBuffer();
+int  countOfflineLines();
+void saveConfig();
+void applyConfig();
+bool sendHeartbeat(const char* mode);
+void reportCommandResult(int id, bool ok, const char* msg);
+void executeCommand(int id, const char* command);
+void doPullOta(const char* version, const char* path);
+bool shouldBeAwake(const struct tm& t);
+long secondsUntilWorkStart(const struct tm& t);
+void deepSleepFor(long seconds, bool touchPeripherals);
+void nightCheckinRoutine();
 
 bool isTimeSynced() {
   struct tm t;
@@ -94,6 +164,7 @@ void saveToOffline(const char* rfid, const char* timestamp) {
     f.printf("{\"card_id\":\"%s\",\"timestamp\":\"%s\"}\n", rfid, timestamp); 
     f.close(); 
     hasOfflineData = true; 
+    offlineCount++;
   }
   xSemaphoreGive(fileMutex);
 }
@@ -129,6 +200,7 @@ void initI2S() {
 
 void playI2STone(float frequency, int duration_ms) {
   size_t bytes_written;
+  if (!peripheralsReady) return;  // ночное пробуждение: I2S не инициализирован
   int total_samples = (SAMPLE_RATE * duration_ms) / 1000;
   int16_t sample_val = 0;
   float phaseIncrement = (64.0 * frequency) / SAMPLE_RATE;
@@ -229,41 +301,496 @@ void onWiFiEvent(WiFiEvent_t event) {
   }
 }
 
-void checkAndGoToSleep() {
-  if (!getLocalTime(&timeinfo, 10)) return;
-  int currentDay = timeinfo.tm_wday; 
-  int currentHour = timeinfo.tm_hour;
-  int currentMin = timeinfo.tm_min;
-  bool shouldSleep = false;
-  long secondsToSleep = 0;
+// ========== ВСПОМОГАТЕЛЬНОЕ ==========
 
-  if (currentDay == 5 && (currentHour > 19 || (currentHour == 19 && currentMin >= 30))) {
-    secondsToSleep = ((23 - currentHour) * 3600) + ((59 - currentMin) * 60) + (60 - timeinfo.tm_sec) + (48 * 3600) + (6 * 3600); 
-    shouldSleep = true;
-  } else if (currentDay == 6) {
-    secondsToSleep = ((23 - currentHour) * 3600) + ((59 - currentMin) * 60) + (60 - timeinfo.tm_sec) + (24 * 3600) + (6 * 3600); 
-    shouldSleep = true;
-  } else if (currentDay == 0) {
-    secondsToSleep = ((23 - currentHour) * 3600) + ((59 - currentMin) * 60) + (60 - timeinfo.tm_sec) + (6 * 3600); 
-    shouldSleep = true;
-  } else {
-    if (currentHour == 19 && currentMin >= 30) shouldSleep = true;
-    if (currentHour >= 20) shouldSleep = true;                     
-    if (currentHour < 6) shouldSleep = true;
-    if (shouldSleep) {
-      if (currentHour >= 19) secondsToSleep = ((23 - currentHour) * 3600) + ((59 - currentMin) * 60) + (60 - timeinfo.tm_sec) + (6 * 3600);
-      else secondsToSleep = ((5 - currentHour) * 3600) + ((59 - currentMin) * 60) + (60 - timeinfo.tm_sec);
+// Секунды от эпохи для даты в UTC. Своё, потому что mktime() на ESP32 считает
+// в локальном поясе, а сервер присылает время в UTC.
+static time_t utcToEpoch(int y, int mo, int d, int h, int mi, int s) {
+  y -= (mo <= 2);
+  int era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned)(y - era * 400);
+  unsigned doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  long days = (long)era * 146097 + (long)doe - 719468;
+  return (time_t)days * 86400L + h * 3600L + mi * 60L + s;
+}
+
+static time_t parseIsoUtc(const char* s) {
+  int Y, Mo, D, H, Mi, S;
+  if (!s) return 0;
+  if (sscanf(s, "%d-%d-%dT%d:%d:%d", &Y, &Mo, &D, &H, &Mi, &S) != 6) return 0;
+  return utcToEpoch(Y, Mo, D, H, Mi, S);
+}
+
+static void parseHhMm(const char* s, uint8_t &h, uint8_t &m) {
+  int hh, mm;
+  if (!s) return;
+  if (sscanf(s, "%d:%d", &hh, &mm) != 2) return;
+  h = constrain(hh, 0, 23);
+  m = constrain(mm, 0, 59);
+}
+
+const char* resetReasonName() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "poweron";
+    case ESP_RST_SW:        return "sw";
+    case ESP_RST_PANIC:     return "panic";
+    case ESP_RST_INT_WDT:   return "int_wdt";
+    case ESP_RST_TASK_WDT:  return "task_wdt";
+    case ESP_RST_WDT:       return "wdt";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    case ESP_RST_BROWNOUT:  return "brownout";
+    case ESP_RST_EXT:       return "ext";
+    default:                return "unknown";
+  }
+}
+
+int countOfflineLines() {
+  int count = 0;
+  xSemaphoreTake(fileMutex, portMAX_DELAY);
+  File f = LittleFS.open("/offline.jsonl", "r");
+  if (f) {
+    while (f.available()) { if (f.read() == '\n') count++; }
+    f.close();
+  }
+  xSemaphoreGive(fileMutex);
+  return count;
+}
+
+// ========== КОНФИГ ==========
+
+void applyConfig() {
+  volPercent = cfg.volumePercent;
+  currentVolume = map(volPercent, 0, 100, 0, 30000);
+  FastLED.setBrightness(cfg.ledBrightness);
+}
+
+void saveConfig() {
+  JsonDocument doc;
+  doc["version"] = cfg.version;
+  doc["hb"]      = cfg.heartbeatSec;
+  doc["sleep"]   = cfg.sleepEnabled;
+  doc["sh"]      = cfg.workStartHour;
+  doc["sm"]      = cfg.workStartMin;
+  doc["eh"]      = cfg.workEndHour;
+  doc["em"]      = cfg.workEndMin;
+  doc["days"]    = cfg.workDaysMask;
+  doc["night"]   = cfg.nightCheckinMin;
+  doc["vol"]     = cfg.volumePercent;
+  doc["led"]     = cfg.ledBrightness;
+  doc["deb"]     = cfg.debounceSec;
+  doc["nosleep"] = (uint32_t)cfg.noSleepUntil;
+
+  xSemaphoreTake(fileMutex, portMAX_DELAY);
+  File f = LittleFS.open("/config.json", "w");
+  if (f) { serializeJson(doc, f); f.close(); }
+  xSemaphoreGive(fileMutex);
+}
+
+void loadConfig() {
+  xSemaphoreTake(fileMutex, portMAX_DELAY);
+  File f = LittleFS.open("/config.json", "r");
+  if (f) {
+    JsonDocument doc;
+    if (!deserializeJson(doc, f)) {
+      cfg.version         = doc["version"] | cfg.version;
+      cfg.heartbeatSec    = doc["hb"]      | cfg.heartbeatSec;
+      cfg.sleepEnabled    = doc["sleep"]   | cfg.sleepEnabled;
+      cfg.workStartHour   = doc["sh"]      | cfg.workStartHour;
+      cfg.workStartMin    = doc["sm"]      | cfg.workStartMin;
+      cfg.workEndHour     = doc["eh"]      | cfg.workEndHour;
+      cfg.workEndMin      = doc["em"]      | cfg.workEndMin;
+      cfg.workDaysMask    = doc["days"]    | cfg.workDaysMask;
+      cfg.nightCheckinMin = doc["night"]   | cfg.nightCheckinMin;
+      cfg.volumePercent   = doc["vol"]     | cfg.volumePercent;
+      cfg.ledBrightness   = doc["led"]     | cfg.ledBrightness;
+      cfg.debounceSec     = doc["deb"]     | cfg.debounceSec;
+      cfg.noSleepUntil    = (time_t)(uint32_t)(doc["nosleep"] | (uint32_t)0);
     }
+    f.close();
+  }
+  xSemaphoreGive(fileMutex);
+}
+
+// Накатывает настройки, присланные сервером. Отсутствующие поля не трогаем —
+// так добавление нового параметра на сервере не сбрасывает остальные.
+void applyServerConfig(JsonObject srcCfg, uint32_t newVersion) {
+  cfg.heartbeatSec    = srcCfg["heartbeat_sec"]     | cfg.heartbeatSec;
+  cfg.sleepEnabled    = srcCfg["sleep_enabled"]     | cfg.sleepEnabled;
+  cfg.nightCheckinMin = srcCfg["night_checkin_min"] | cfg.nightCheckinMin;
+  cfg.volumePercent   = srcCfg["volume_percent"]    | cfg.volumePercent;
+  cfg.ledBrightness   = srcCfg["led_brightness"]    | cfg.ledBrightness;
+  cfg.debounceSec     = srcCfg["debounce_sec"]      | cfg.debounceSec;
+
+  parseHhMm(srcCfg["work_start"].as<const char*>(), cfg.workStartHour, cfg.workStartMin);
+  parseHhMm(srcCfg["work_end"].as<const char*>(),   cfg.workEndHour,   cfg.workEndMin);
+
+  JsonArray days = srcCfg["work_days"].as<JsonArray>();
+  if (!days.isNull()) {
+    uint8_t mask = 0;
+    for (JsonVariant v : days) {
+      int d = v.as<int>();
+      if (d >= 1 && d <= 7) mask |= (uint8_t)(1 << (d - 1));
+    }
+    if (mask) cfg.workDaysMask = mask;   // пустой список игнорируем: иначе сканер уснёт навсегда
   }
 
-  if (shouldSleep) {
+  cfg.noSleepUntil = parseIsoUtc(srcCfg["no_sleep_until"].as<const char*>());
+  cfg.version = newVersion;
+
+  if (cfg.heartbeatSec < 10) cfg.heartbeatSec = 10;
+  saveConfig();
+  applyConfig();
+  Serial.printf("[КОНФИГ] Применён с сервера, версия %u\n", (unsigned)cfg.version);
+}
+
+// ========== РАСПИСАНИЕ И СОН ==========
+
+bool shouldBeAwake(const struct tm& t) {
+  if (!cfg.sleepEnabled) return true;
+
+  if (cfg.noSleepUntil > 0) {
+    time_t now; time(&now);
+    if (now < cfg.noSleepUntil) return true;   // режим обслуживания
+  }
+
+  int isoDay = (t.tm_wday == 0) ? 7 : t.tm_wday;          // 1 = Пн ... 7 = Вс
+  if (!(cfg.workDaysMask & (1 << (isoDay - 1)))) return false;
+
+  long nowSec   = t.tm_hour * 3600L + t.tm_min * 60L + t.tm_sec;
+  long startSec = cfg.workStartHour * 3600L + cfg.workStartMin * 60L;
+  long endSec   = cfg.workEndHour   * 3600L + cfg.workEndMin   * 60L;
+  return (nowSec >= startSec && nowSec < endSec);
+}
+
+long secondsUntilWorkStart(const struct tm& t) {
+  int isoDay    = (t.tm_wday == 0) ? 7 : t.tm_wday;
+  long nowSec   = t.tm_hour * 3600L + t.tm_min * 60L + t.tm_sec;
+  long startSec = cfg.workStartHour * 3600L + cfg.workStartMin * 60L;
+
+  for (int ahead = 0; ahead <= 7; ahead++) {
+    int day = ((isoDay - 1 + ahead) % 7) + 1;
+    if (!(cfg.workDaysMask & (1 << (day - 1)))) continue;
+    if (ahead == 0 && nowSec >= startSec) continue;       // на сегодня начало уже прошло
+    return ahead * 86400L + startSec - nowSec;
+  }
+  return 24 * 3600L;   // рабочих дней в маске нет — просто проверимся через сутки
+}
+
+void deepSleepFor(long seconds, bool touchPeripherals) {
+  if (seconds < 30) seconds = 30;
+  Serial.printf("[СОН] Засыпаю на %ld c (ночные проверки: %s)\n",
+                seconds, rtcNightMode ? "да" : "нет");
+
+  if (touchPeripherals) {
     FastLED.clear(); FastLED.show();
     digitalWrite(CTRL_PIN, LOW);
-    tft.enableDisplay(false); 
-    WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
-    esp_sleep_enable_timer_wakeup((uint64_t)secondsToSleep * 1000000ULL);
-    esp_deep_sleep_start();
+    tft.enableDisplay(false);
   }
+  WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+  esp_deep_sleep_start();
+}
+
+void checkAndGoToSleep() {
+  if (!cfg.sleepEnabled) return;
+  if (!getLocalTime(&timeinfo, 10)) return;    // без времени спать вслепую опасно
+  if (shouldBeAwake(timeinfo)) return;
+
+  long sleepFor = secondsUntilWorkStart(timeinfo);
+  bool checkIn = (cfg.nightCheckinMin > 0);
+  if (checkIn) {
+    long chunk = (long)cfg.nightCheckinMin * 60L;
+    if (chunk < sleepFor) sleepFor = chunk;
+  }
+  rtcNightMode = checkIn;
+
+  // Последний heartbeat перед сном. "night" — проснусь и отмечусь, "presleep" —
+  // пропаду до утра, не считайте меня умершим.
+  sendHeartbeat(checkIn ? "night" : "presleep");
+
+  // Этим же ответом мог приехать новый конфиг — например «не спать до 22:00»,
+  // который админ поставил за минуту до отбоя. Перепроверяем, иначе сканер
+  // уснёт назло только что отданному распоряжению.
+  if (getLocalTime(&timeinfo, 10) && shouldBeAwake(timeinfo)) {
+    rtcNightMode = false;
+    return;
+  }
+  deepSleepFor(sleepFor, true);
+}
+
+// ========== СВЯЗЬ С СЕРВЕРОМ ==========
+
+void reportCommandResult(int id, bool ok, const char* msg) {
+  if (id <= 0 || WiFi.status() != WL_CONNECTED) return;
+
+  JsonDocument doc;
+  doc["device_id"]  = DEVICE_ID;
+  doc["command_id"] = id;
+  doc["ok"]         = ok;
+  doc["message"]    = msg;
+  String body; serializeJson(doc, body);
+
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient http;
+  http.begin(client, API_URL_CMD_RESULT);
+  http.setTimeout(8000);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Key", DEVICE_KEY);
+  http.POST(body);
+  http.end();
+}
+
+void executeCommand(int id, const char* command) {
+  String c = command;
+  Serial.printf("[КОМАНДА] %s (#%d)\n", command, id);
+
+  if (c == "reboot") {
+    // Отчитываемся ДО перезагрузки — иначе команда навсегда останется висеть
+    // в статусе «отправлена», и админка не покажет, что всё получилось.
+    reportCommandResult(id, true, "Перезагружаюсь");
+    delay(300);
+    ESP.restart();
+    return;
+  }
+
+  if (c == "clear_queue") {
+    int dropped = offlineCount;
+    xSemaphoreTake(fileMutex, portMAX_DELAY);
+    LittleFS.remove("/offline.jsonl");
+    LittleFS.remove("/temp.jsonl");
+    xSemaphoreGive(fileMutex);
+    offlineCount = 0;
+    hasOfflineData = false;
+    char msg[80];
+    snprintf(msg, sizeof(msg), "Очередь очищена, потеряно отметок: %d", dropped);
+    reportCommandResult(id, true, msg);
+    return;
+  }
+
+  if (c == "flush_queue") {
+    forceFlushQueue = true;
+    reportCommandResult(id, true, "Досылаю очередь");
+    return;
+  }
+
+  if (c == "identify") {
+    if (!peripheralsReady) {
+      reportCommandResult(id, false, "Сканер спит — сигнал подать нечем");
+      return;
+    }
+    identifyRequested = true;   // пищит и мигает loop(), он владеет звуком и лентой
+    reportCommandResult(id, true, "Сигнал подан");
+    return;
+  }
+
+  if (c == "reload_config") {
+    cfg.version = 0;            // на следующем heartbeat сервер пришлёт настройки заново
+    saveConfig();
+    reportCommandResult(id, true, "Настройки будут перечитаны");
+    return;
+  }
+
+  reportCommandResult(id, false, "Команда не поддерживается этой прошивкой");
+}
+
+// Скачивает и ставит прошивку с сервера. В отличие от ArduinoOTA работает из
+// любой сети — не нужно быть с ноутбуком в одной локалке со сканером.
+void doPullOta(const char* version, const char* path) {
+  if (!version || !path || strlen(path) == 0) return;
+
+  // Одна и та же сборка не ставится больше трёх раз подряд: иначе битый .bin
+  // заставит сканер качать его вечно.
+  if (strncmp(rtcOtaVersion, version, sizeof(rtcOtaVersion) - 1) == 0) {
+    if (rtcOtaFails >= 3) {
+      Serial.println("[OTA] Сборка уже трижды не встала — больше не пробую");
+      return;
+    }
+  } else {
+    strncpy(rtcOtaVersion, version, sizeof(rtcOtaVersion) - 1);
+    rtcOtaVersion[sizeof(rtcOtaVersion) - 1] = '\0';
+    rtcOtaFails = 0;
+  }
+
+  Serial.printf("[OTA] Ставлю версию %s\n", version);
+  isOTAUpdating = true;
+
+  if (peripheralsReady) {
+    FastLED.clear(); FastLED.show();
+    tft.fillScreen(ST77XX_BLACK);
+    u8g2Fonts.setFont(u8g2_font_cu12_t_cyrillic);
+    u8g2Fonts.setForegroundColor(ST77XX_YELLOW);
+    u8g2Fonts.setBackgroundColor(ST77XX_BLACK);
+    u8g2Fonts.setCursor(20, 40); u8g2Fonts.print("ОБНОВЛЕНИЕ");
+    u8g2Fonts.setCursor(15, 65); u8g2Fonts.print("не выключайте");
+  }
+
+  // Скачивание блокирующее и долгое — сторожевой таймер на это время снимаем.
+  esp_task_wdt_delete(NULL);
+
+  WiFiClientSecure client; client.setInsecure();
+  httpUpdate.rebootOnUpdate(true);
+  httpUpdate.setAuthorization("scanner", DEVICE_KEY);   // HTTPUpdate умеет только Basic
+  // Контрольную сумму HTTPUpdate возьмёт сам из заголовка x-MD5 и сверит после
+  // скачивания — битый образ до записи не дойдёт.
+  t_httpUpdate_return ret = httpUpdate.update(client, API_BASE + String(path));
+
+  // Сюда попадаем, только если перезагрузки не случилось — значит обновление
+  // не встало. Счётчик неудач поднимаем лишь на настоящей ошибке: ответ
+  // HTTP_UPDATE_NO_UPDATES означает «ставить нечего», это не поломка.
+  if (ret == HTTP_UPDATE_FAILED) {
+    rtcOtaFails++;
+    snprintf(rtcOtaError, sizeof(rtcOtaError), "%s: %s",
+             version, httpUpdate.getLastErrorString().c_str());
+    Serial.printf("[OTA] Не удалось: %s\n", rtcOtaError);
+  } else {
+    Serial.printf("[OTA] Сервер не дал обновления (код %d)\n", (int)ret);
+  }
+
+  // Пищим ДО снятия флага: пока он поднят, loop() не трогает I2S и драки за
+  // звуковой канал между ядрами не будет.
+  if (peripheralsReady) { beepError(); forceRedraw = true; currentScreen = MAIN_SCREEN; }
+  isOTAUpdating = false;
+  esp_task_wdt_add(NULL);
+}
+
+// Единственный способ для сервера что-то нам сказать: своего адреса у сканера
+// нет, наружу он ходит только сам.
+static bool heartbeatExchange(const char* mode) {
+  JsonDocument doc;
+  doc["device_id"]       = DEVICE_ID;
+  doc["fw_version"]      = FW_VERSION;
+  doc["mode"]            = mode;
+  doc["config_version"]  = cfg.version;
+  doc["ip"]              = WiFi.localIP().toString();
+  doc["ssid"]            = WiFi.SSID();
+  doc["rssi"]            = WiFi.RSSI();
+  doc["battery_percent"] = batteryPercent;
+  doc["battery_voltage"] = batteryVoltage;
+  doc["queue_size"]      = offlineCount;
+  doc["free_heap"]       = (uint32_t)ESP.getFreeHeap();
+  doc["uptime_sec"]      = (uint32_t)(millis() / 1000UL);
+  doc["reset_reason"]    = resetReasonName();
+  doc["time_synced"]     = isTimeSynced();
+  if (rtcOtaError[0]) doc["ota_error"] = rtcOtaError;
+
+  String body; serializeJson(doc, body);
+
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient http;
+  http.begin(client, API_URL_HEARTBEAT);
+  http.setTimeout(10000);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Key", DEVICE_KEY);
+
+  int code = http.POST(body);
+  if (code != 200) {
+    Serial.printf("[HEARTBEAT] Сервер ответил %d\n", code);
+    http.end();
+    return false;
+  }
+  String payload = http.getString();
+  http.end();
+
+  rtcOtaError[0] = '\0';   // ошибку доложили — больше её не повторяем
+
+  JsonDocument resp;
+  if (deserializeJson(resp, payload)) return false;
+
+  uint32_t serverCfgVersion = resp["config_version"] | cfg.version;
+  JsonObject newCfg = resp["config"].as<JsonObject>();
+  if (!newCfg.isNull()) applyServerConfig(newCfg, serverCfgVersion);
+
+  // Обновление важнее команд: после него всё равно перезагрузка, а остальное
+  // доедет уже на новой прошивке.
+  JsonObject ota = resp["ota"].as<JsonObject>();
+  if (!ota.isNull()) {
+    doPullOta(ota["version"] | "", ota["url"] | "");
+    return true;
+  }
+
+  for (JsonVariant item : resp["commands"].as<JsonArray>()) {
+    executeCommand(item["id"] | 0, item["command"] | "");
+  }
+  return true;
+}
+
+bool sendHeartbeat(const char* mode) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  // Ждём недолго и намеренно: заблокироваться тут насмерть нельзя — главный цикл
+  // обязан успевать гладить сторожевой таймер. Не дождались — пропустим удар,
+  // следующий всё равно через heartbeatSec секунд.
+  if (netMutex && xSemaphoreTake(netMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    Serial.println("[HEARTBEAT] Сеть занята досылом очереди, пропускаю");
+    return false;
+  }
+  bool ok = heartbeatExchange(mode);
+  if (netMutex) xSemaphoreGive(netMutex);
+  return ok;
+}
+
+// ========== КОРОТКОЕ ПРОБУЖДЕНИЕ НОЧЬЮ ==========
+// Поднимаем только Wi-Fi: отчитываемся, досылаем накопившееся, забираем команды
+// и спим дальше. Экран, подсветка, звук и ридер не включаются — ради этого всё
+// и затевалось, иначе ночное дежурство съело бы батарею.
+void nightCheckinRoutine() {
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = 60000,
+    .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+    .trigger_panic = true
+  };
+  esp_task_wdt_reconfigure(&wdt_config);
+  esp_task_wdt_add(NULL);
+
+  LittleFS.begin(true);
+  if (fileMutex == NULL) fileMutex = xSemaphoreCreateMutex();
+  if (netMutex == NULL) netMutex = xSemaphoreCreateMutex();
+  loadConfig();
+  offlineCount = countOfflineLines();
+  hasOfflineData = (offlineCount > 0);
+
+  struct tm t;
+  bool haveTime = getLocalTime(&t, 100);   // после deep sleep часы RTC идут дальше
+
+  // Утро наступило — грузимся полностью. Через перезагрузку, чтобы не тащить
+  // за собой половину поднятого ночного состояния.
+  if (haveTime && shouldBeAwake(t)) { rtcNightMode = false; ESP.restart(); }
+
+  pinMode(BATT_PIN, INPUT);
+  lastBattCheck = 0;
+  updateBatteryStatus();
+
+  WiFi.mode(WIFI_STA); WiFi.onEvent(onWiFiEvent); WiFi.begin();
+  for (int i = 0; i < 100 && WiFi.status() != WL_CONNECTED; i++) {
+    esp_task_wdt_reset();
+    delay(200);
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    hasInternet = true;
+    if (!haveTime) {
+      configTzTime("EET-2EEST,M3.5.0/3,M10.5.0/4", "pool.ntp.org");
+      for (int i = 0; i < 25 && !isTimeSynced(); i++) { esp_task_wdt_reset(); delay(200); }
+      haveTime = getLocalTime(&t, 100);
+    }
+    esp_task_wdt_reset();
+    processOfflineBuffer();          // накопленное за ночь уйдёт сразу
+    esp_task_wdt_reset();
+    sendHeartbeat("night");          // здесь же выполнятся команды и обновление
+  }
+
+  // Команда могла снять расписание или включить режим обслуживания — тогда
+  // просыпаемся по-настоящему. (reboot перезагружает сам, сюда не возвращается.)
+  if (getLocalTime(&t, 100) && shouldBeAwake(t)) { rtcNightMode = false; ESP.restart(); }
+
+  long sleepFor = (long)cfg.nightCheckinMin * 60L;
+  if (sleepFor <= 0) sleepFor = 30 * 60L;   // проверки выключили — доспим до утра одним куском
+  if (haveTime) {
+    long untilStart = secondsUntilWorkStart(t);
+    if (untilStart < sleepFor) sleepFor = untilStart;
+  }
+  deepSleepFor(sleepFor, false);
 }
 
 void setupOTA() {
@@ -294,6 +821,17 @@ void setupOTA() {
 
 void setup() {
   Serial.begin(115200);
+
+  // Проснулись по таймеру внутри ночного цикла — уходим в короткую ветку:
+  // отчитаться и спать дальше, не поднимая экран, ленту, звук и ридер. Отсюда
+  // не возвращаются: либо снова сон, либо перезагрузка в полный режим.
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER && rtcNightMode) {
+    nightCheckinRoutine();
+  }
+
+  // Обновление доехало — забываем прошлую ошибку OTA, она уже неактуальна.
+  if (strcmp(rtcOtaVersion, FW_VERSION) == 0) { rtcOtaError[0] = '\0'; rtcOtaFails = 0; }
+
   pinMode(CTRL_PIN, OUTPUT); digitalWrite(CTRL_PIN, HIGH); delay(50);
   rfidBuffer.reserve(32); 
   pinMode(BTN_UP, INPUT_PULLUP); pinMode(BTN_DOWN, INPUT_PULLUP);
@@ -304,6 +842,7 @@ void setup() {
 
   LittleFS.begin(true);
   fileMutex = xSemaphoreCreateMutex();
+  netMutex = xSemaphoreCreateMutex();
   scanQueue = xQueueCreate(10, sizeof(ScanEvent)); 
 
   xSemaphoreTake(fileMutex, portMAX_DELAY);
@@ -314,11 +853,14 @@ void setup() {
     if (temp) temp.close(); if (offline) offline.close();
     LittleFS.remove("/temp.jsonl");
   }
-  if (LittleFS.exists("/offline.jsonl")) {
-    File check = LittleFS.open("/offline.jsonl", "r");
-    if (check) { hasOfflineData = (check.size() > 5); check.close(); }
-  }
   xSemaphoreGive(fileMutex);
+
+  // Настройки с прошлого раза — до первого heartbeat работаем по ним, а не по
+  // дефолтам, иначе после каждой перезагрузки сканер на полминуты забывал бы
+  // расписание и громкость.
+  loadConfig();
+  offlineCount = countOfflineLines();
+  hasOfflineData = (offlineCount > 0);
 
   initI2S(); 
   SPI.begin(12, -1, 11, 13); 
@@ -331,7 +873,9 @@ void setup() {
   
   Serial2.begin(9600, SERIAL_8N1, RFID_RX_PIN, -1);
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
-  FastLED.setBrightness(100); FastLED.clear(); FastLED.show();
+  FastLED.setBrightness(cfg.ledBrightness); FastLED.clear(); FastLED.show();
+  applyConfig();
+  peripheralsReady = true;   // с этого момента звук и ленту трогать можно
 
   WiFi.mode(WIFI_STA); WiFi.onEvent(onWiFiEvent); WiFi.setAutoReconnect(true); WiFi.begin(); 
   setupOTA(); 
@@ -341,6 +885,10 @@ void setup() {
 }
 
 bool postSingleScan(ScanEvent& evt) {
+  // Тоже под общим мьютексом сети: параллельно с досылом очереди или heartbeat
+  // вторую TLS-сессию ESP32 не потянет.
+  if (netMutex && xSemaphoreTake(netMutex, pdMS_TO_TICKS(5000)) != pdTRUE) return false;
+
   WiFiClientSecure client; client.setInsecure();
   HTTPClient http;
   http.begin(client, API_URL_BULK); 
@@ -351,12 +899,14 @@ bool postSingleScan(ScanEvent& evt) {
   snprintf(jsonBuffer, sizeof(jsonBuffer), "{\"scans\":[{\"card_id\":\"%s\",\"timestamp\":\"%s\"}]}", evt.rfid, evt.timestamp);
   int res = http.POST(String(jsonBuffer));
   http.end();
+  if (netMutex) xSemaphoreGive(netMutex);
   // ИСПРАВЛЕНО: только 2xx считаем успехом. 4xx раньше тоже удалял запись -> теряли отметки.
   return (res >= 200 && res < 300);
 }
 
 void processOfflineBuffer() {
   if (WiFi.status() != WL_CONNECTED || !hasInternet || !isTimeSynced()) return;
+  if (netMutex && xSemaphoreTake(netMutex, pdMS_TO_TICKS(3000)) != pdTRUE) return;
 
   bool fileExists = false;
   xSemaphoreTake(fileMutex, portMAX_DELAY);
@@ -367,10 +917,10 @@ void processOfflineBuffer() {
   }
   xSemaphoreGive(fileMutex);
 
-  if (!fileExists) return;
+  if (!fileExists) { if (netMutex) xSemaphoreGive(netMutex); return; }
 
   File tempFile = LittleFS.open("/temp.jsonl", "r");
-  if (!tempFile) return;
+  if (!tempFile) { if (netMutex) xSemaphoreGive(netMutex); return; }
 
   bool anyFailed = false;
   
@@ -429,13 +979,20 @@ void processOfflineBuffer() {
 
   xSemaphoreTake(fileMutex, portMAX_DELAY);
   LittleFS.remove("/temp.jsonl");
-  if (!anyFailed && !LittleFS.exists("/offline.jsonl")) hasOfflineData = false;
   xSemaphoreGive(fileMutex);
+
+  if (netMutex) xSemaphoreGive(netMutex);
+
+  // Пересчитываем по факту: длину очереди видно в админке, врать ей нельзя.
+  offlineCount = countOfflineLines();
+  hasOfflineData = (offlineCount > 0);
 }
 
 void syncTaskCode(void * pvParameters) {
   esp_task_wdt_add(NULL);
   unsigned long lastBulkSync = 0;
+  unsigned long lastHeartbeat = 0;
+  bool firstBeat = true;
   for(;;) {
     esp_task_wdt_reset();
     if (isOTAUpdating) { vTaskDelay(100 / portTICK_PERIOD_MS); continue; }
@@ -449,9 +1006,22 @@ void syncTaskCode(void * pvParameters) {
       if (!scanSent) saveToOffline(evt.rfid, evt.timestamp);
     }
     
-    if (millis() - lastBulkSync > 10000) {
+    if (forceFlushQueue || millis() - lastBulkSync > 10000) {
+      forceFlushQueue = false;
       lastBulkSync = millis();
       processOfflineBuffer();
+    }
+
+    // Heartbeat: сервер за NAT до нас не достучится, поэтому отчитываемся сами
+    // и заодно забираем накопившиеся команды. Первый раз — сразу, как поднялась
+    // сеть, чтобы в админке устройство появилось не через полминуты.
+    if (WiFi.status() == WL_CONNECTED && hasInternet) {
+      unsigned long interval = firstBeat ? 3000UL : (unsigned long)cfg.heartbeatSec * 1000UL;
+      if (millis() - lastHeartbeat > interval) {
+        lastHeartbeat = millis();
+        firstBeat = false;
+        sendHeartbeat("active");
+      }
     }
   }
 }
@@ -473,8 +1043,27 @@ void loop() {
   if (isOTAUpdating) { esp_task_wdt_reset(); return; }
 
   unsigned long nowMs = millis();
+
+  // Команду identify исполняет главный цикл: звук, лента и экран принадлежат
+  // ему, дёргать их из фоновой задачи — драка за SPI и I2S.
+  if (identifyRequested) {
+    identifyRequested = false;
+    beepNav(); beepSuccess();
+    fill_rainbow(leds, NUM_LEDS, 0, 255 / NUM_LEDS); FastLED.show();
+    delay(700);
+    FastLED.clear(); FastLED.show();
+    forceRedraw = true;
+  }
+
   static unsigned long lastSleepCheck = 0;
-  if (nowMs - lastSleepCheck > 60000) { lastSleepCheck = nowMs; checkAndGoToSleep(); }
+  if (nowMs - lastSleepCheck > 60000) {
+    lastSleepCheck = nowMs;
+    // Внутри — heartbeat с сетевым таймаутом, до полутора десятков секунд.
+    // Гладим сторожевой таймер с обеих сторон, чтобы он не счёл это зависанием.
+    esp_task_wdt_reset();
+    checkAndGoToSleep();
+    esp_task_wdt_reset();
+  }
 
   updateBatteryStatus(); esp_task_wdt_reset();
   
@@ -509,11 +1098,12 @@ void loop() {
     if (c == 2) rfidBuffer = "";
     else if (c == 3) { 
       if (rfidBuffer.length() == 12 || rfidBuffer.length() == 10) { 
+        const unsigned long debounceMs = (unsigned long)cfg.debounceSec * 1000UL;
         for (auto it = recentScans.begin(); it != recentScans.end(); ) {
-          if (nowMs - it->second > DEBOUNCE_TIME) it = recentScans.erase(it);
+          if (nowMs - it->second > debounceMs) it = recentScans.erase(it);
           else ++it;
         }
-        if (recentScans.count(rfidBuffer) && (nowMs - recentScans[rfidBuffer] < DEBOUNCE_TIME)) {
+        if (recentScans.count(rfidBuffer) && (nowMs - recentScans[rfidBuffer] < debounceMs)) {
           if (nowMs - recentScans[rfidBuffer] < 4000) { rfidBuffer = ""; continue; } 
           currentScreen = ERROR_SCREEN; forceRedraw = true; screenTimer = nowMs;
           recentScans[rfidBuffer] = nowMs; beepError(); 

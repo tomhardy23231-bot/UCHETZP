@@ -1,5 +1,8 @@
 # models.py - Модели базы данных (SQLAlchemy)
-from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, ForeignKey, UniqueConstraint
+from sqlalchemy import (
+    Column, Integer, String, Float, DateTime, Enum, ForeignKey, UniqueConstraint,
+    Boolean, Text, LargeBinary,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -193,3 +196,101 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     employee = relationship("Employee", back_populates="user")
+
+# ========== СКАНЕР: МОНИТОРИНГ И УПРАВЛЕНИЕ ==========
+# Сканер за NAT — сервер к нему достучаться не может. Поэтому устройство само
+# раз в N секунд шлёт heartbeat, а сервер в ответе отдаёт накопленные команды.
+
+
+class ScannerDevice(Base):
+    """Состояние аппаратного сканера — обновляется каждым heartbeat."""
+    __tablename__ = "scanner_devices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, unique=True, nullable=False, index=True)  # "HARIZMA-SCANNER"
+    name = Column(String, nullable=True)  # человеческое имя ("Сканер на проходной")
+
+    first_seen_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    # "active" — обычный рабочий heartbeat, "night" — короткое пробуждение из сна.
+    # От этого зависит, через сколько секунд молчания считать устройство офлайн.
+    last_mode = Column(String, nullable=True)
+
+    fw_version = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    ssid = Column(String, nullable=True)
+    rssi = Column(Integer, nullable=True)           # dBm, обычно -30..-90
+    battery_percent = Column(Integer, nullable=True)
+    battery_voltage = Column(Float, nullable=True)
+    queue_size = Column(Integer, nullable=True)     # строк в /offline.jsonl
+    free_heap = Column(Integer, nullable=True)      # байт — видно утечки
+    uptime_sec = Column(Integer, nullable=True)
+    reset_reason = Column(String, nullable=True)    # panic/wdt/poweron/deepsleep/sw
+    time_synced = Column(Boolean, nullable=True)    # отработал ли NTP
+
+    # Конфиг устройства (JSON-строка). Сканер применяет его, когда config_version
+    # в ответе heartbeat выше той, что у него сохранена.
+    config_json = Column(Text, nullable=True)
+    config_version = Column(Integer, nullable=False, default=1)
+
+    # Какую прошивку устройство должно на себя поставить (id из scanner_firmware).
+    # NULL — обновление не назначено.
+    target_firmware_id = Column(Integer, nullable=True)
+    # Текст последней неудачи обновления, как его прислало устройство. Сканер
+    # пробует одну и ту же сборку максимум трижды, поэтому без этого поля
+    # обновление молча не встало бы и никто бы не узнал почему.
+    last_ota_error = Column(String, nullable=True)
+
+
+class ScannerCommand(Base):
+    """Очередь команд устройству. Забираются в ответе на heartbeat."""
+    __tablename__ = "scanner_commands"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, nullable=False, index=True)
+    # reboot | clear_queue | flush_queue | identify | ota_update | reload_config
+    command = Column(String, nullable=False)
+    payload = Column(Text, nullable=True)  # JSON с параметрами, если нужны
+
+    # pending -> sent -> done / failed. expired — устройство не забрало вовремя.
+    status = Column(String, nullable=False, default="pending", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    result = Column(String, nullable=True)      # что ответило устройство
+    created_by = Column(String, nullable=True)  # username админа
+
+
+class ScannerHeartbeat(Base):
+    """История heartbeat'ов — для графиков сигнала, батареи и очереди."""
+    __tablename__ = "scanner_heartbeats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, nullable=False, index=True)
+    at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    mode = Column(String, nullable=True)
+    rssi = Column(Integer, nullable=True)
+    battery_percent = Column(Integer, nullable=True)
+    battery_voltage = Column(Float, nullable=True)
+    queue_size = Column(Integer, nullable=True)
+    free_heap = Column(Integer, nullable=True)
+    uptime_sec = Column(Integer, nullable=True)
+
+
+class ScannerFirmware(Base):
+    """Загруженные админом сборки прошивки (.bin) для обновления по воздуху.
+
+    Бинарник лежит прямо в базе: контейнеры пересобираются при автодеплое, а
+    отдельного тома под файлы нет — так сборка переживает пересборку.
+    """
+    __tablename__ = "scanner_firmware"
+
+    id = Column(Integer, primary_key=True, index=True)
+    version = Column(String, nullable=False)   # "2.0.1" — сравнивается с FW_VERSION сканера
+    filename = Column(String, nullable=True)
+    size_bytes = Column(Integer, nullable=False)
+    md5 = Column(String, nullable=False)       # сканер сверяет после скачивания
+    data = Column(LargeBinary, nullable=False)
+    notes = Column(String, nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    uploaded_by = Column(String, nullable=True)

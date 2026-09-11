@@ -17,6 +17,7 @@ import models
 import schemas
 import crud
 import auth
+import scanner
 
 # Глобальная переменная для временного хранения ID неизвестной карты (для регистрации новых сотрудников)
 latest_scanned_card = None
@@ -133,6 +134,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Мониторинг и управление аппаратным сканером — отдельный модуль со своей
+# авторизацией (ключ устройства вместо JWT).
+app.include_router(scanner.router)
 
 
 # ========== КОНСТАНТЫ ДЛЯ РАСЧЁТА ЗАРПЛАТЫ ==========

@@ -291,4 +291,104 @@ export const getMyTransactions = async (month = null) => {
   return response.data;
 };
 
+// ========== СКАНЕР: МОНИТОРИНГ И УПРАВЛЕНИЕ ==========
+// Сканер за NAT, напрямую до него не достучаться. Всё, что тут есть, — это
+// чтение состояния, которое он сам присылает, и очередь команд, которую он
+// заберёт на ближайшем heartbeat.
+
+export const getScannerDevices = async () => {
+  const response = await api.get('/api/scanner/devices');
+  return response.data;
+};
+
+export const getScannerDevice = async (deviceId) => {
+  const response = await api.get(`/api/scanner/devices/${encodeURIComponent(deviceId)}`);
+  return response.data;
+};
+
+export const getScannerHistory = async (deviceId, hours = 24) => {
+  const response = await api.get(
+    `/api/scanner/devices/${encodeURIComponent(deviceId)}/history?hours=${hours}`
+  );
+  return response.data;
+};
+
+export const getScannerCommands = async (deviceId, limit = 50) => {
+  const response = await api.get(
+    `/api/scanner/devices/${encodeURIComponent(deviceId)}/commands?limit=${limit}`
+  );
+  return response.data;
+};
+
+export const sendScannerCommand = async (deviceId, command, payload = null) => {
+  const response = await api.post(
+    `/api/scanner/devices/${encodeURIComponent(deviceId)}/commands`,
+    { command, payload }
+  );
+  return response.data;
+};
+
+export const cancelScannerCommand = async (deviceId, commandId) => {
+  const response = await api.delete(
+    `/api/scanner/devices/${encodeURIComponent(deviceId)}/commands/${commandId}`
+  );
+  return response.data;
+};
+
+export const updateScannerConfig = async (deviceId, config) => {
+  const response = await api.put(
+    `/api/scanner/devices/${encodeURIComponent(deviceId)}/config`, config
+  );
+  return response.data;
+};
+
+export const renameScanner = async (deviceId, name) => {
+  const response = await api.put(
+    `/api/scanner/devices/${encodeURIComponent(deviceId)}/name?name=${encodeURIComponent(name)}`
+  );
+  return response.data;
+};
+
+export const getScannerHealth = async () => {
+  const response = await api.get('/api/scanner/health');
+  return response.data;
+};
+
+// ========== ПРОШИВКИ СКАНЕРА ==========
+
+export const getScannerFirmware = async () => {
+  const response = await api.get('/api/scanner/firmware');
+  return response.data;
+};
+
+export const uploadScannerFirmware = async (version, notes, file) => {
+  const form = new FormData();
+  form.append('version', version);
+  if (notes) form.append('notes', notes);
+  form.append('file', file);
+  // Content-Type тут выставляет браузер вместе с boundary — свой не подставляем.
+  const response = await api.post('/api/scanner/firmware', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data;
+};
+
+export const deleteScannerFirmware = async (firmwareId) => {
+  const response = await api.delete(`/api/scanner/firmware/${firmwareId}`);
+  return response.data;
+};
+
+export const assignScannerFirmware = async (deviceId, firmwareId) => {
+  const response = await api.post(
+    `/api/scanner/devices/${encodeURIComponent(deviceId)}/update?firmware_id=${firmwareId}`
+  );
+  return response.data;
+};
+
+export const cancelScannerUpdate = async (deviceId) => {
+  const response = await api.delete(`/api/scanner/devices/${encodeURIComponent(deviceId)}/update`);
+  return response.data;
+};
+
 export default api;
+

@@ -3,7 +3,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, BookUser, Users, Calculator, BarChart3, ScrollText,
+  LayoutDashboard, BookUser, Users, Calculator, BarChart3, ScrollText, ScanLine,
 } from 'lucide-react';
 
 const TABS = [
@@ -13,13 +13,14 @@ const TABS = [
   { path: '/payroll',    icon: Calculator,      label: 'Зарплата' },
   { path: '/analytics',  icon: BarChart3,       label: 'Аналитика' },
   { path: '/logs',       icon: ScrollText,      label: 'Логи' },
+  { path: '/scanner',    icon: ScanLine,        label: 'Сканер' },
 ];
 
 const MobileBottomNav = () => {
   const location = useLocation();
   return (
     <nav
-      className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 grid grid-cols-6 h-[60px] pb-[env(safe-area-inset-bottom)]"
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 grid grid-cols-7 h-[60px] pb-[env(safe-area-inset-bottom)]"
       aria-label="Основная навигация"
     >
       {TABS.map((tab) => {

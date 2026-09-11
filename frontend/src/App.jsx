@@ -10,6 +10,7 @@ import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
 import Analytics from './pages/Analytics';
 import Logs from './pages/Logs';
+import Scanner from './pages/Scanner';
 import Login from './pages/Login';
 import NotificationManager from './components/NotificationManager';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -78,6 +79,7 @@ function AdminLayout() {
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/scanner" element={<Scanner />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

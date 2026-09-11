@@ -5,7 +5,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, BookUser, Users, Calculator,
-  ScrollText, ChevronLeft, ChevronRight, LogOut, BarChart3,
+  ScrollText, ChevronLeft, ChevronRight, LogOut, BarChart3, ScanLine,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -20,6 +20,7 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
     { path: '/payroll',    icon: Calculator,      label: 'Зарплата' },
     { path: '/analytics',  icon: BarChart3,       label: 'Аналитика' },
     { path: '/logs',       icon: ScrollText,      label: 'Логи' },
+    { path: '/scanner',    icon: ScanLine,        label: 'Сканер' },
   ];
 
   const isActive = (path) => location.pathname === path;

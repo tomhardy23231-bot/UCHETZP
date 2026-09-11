@@ -264,3 +264,152 @@ class CabinetActivityEntry(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ========== СХЕМЫ ДЛЯ МОНИТОРИНГА СКАНЕРА ==========
+
+class ScannerHeartbeatIn(BaseModel):
+    """То, что сканер шлёт о себе каждые N секунд."""
+    device_id: str
+    fw_version: Optional[str] = None
+    mode: str = "active"              # active | night (короткое пробуждение из сна)
+    config_version: int = 0           # версия конфига, которая сейчас на устройстве
+    ip: Optional[str] = None
+    ssid: Optional[str] = None
+    rssi: Optional[int] = None
+    battery_percent: Optional[int] = None
+    battery_voltage: Optional[float] = None
+    queue_size: Optional[int] = None
+    free_heap: Optional[int] = None
+    uptime_sec: Optional[int] = None
+    reset_reason: Optional[str] = None
+    time_synced: Optional[bool] = None
+    ota_error: Optional[str] = None   # почему не встало последнее обновление
+
+
+class ScannerCommandOut(BaseModel):
+    """Команда в ответе на heartbeat (то, что читает прошивка)."""
+    id: int
+    command: str
+    payload: Optional[dict] = None
+
+
+class ScannerOtaOut(BaseModel):
+    """Инструкция на обновление прошивки."""
+    version: str
+    url: str
+    md5: str
+    size: int
+
+
+class ScannerHeartbeatOut(BaseModel):
+    """Ответ сервера сканеру."""
+    server_time: datetime
+    config_version: int
+    config: Optional[dict] = None     # присылаем, только если у устройства версия старее
+    commands: List[ScannerCommandOut] = []
+    ota: Optional[ScannerOtaOut] = None
+    next_heartbeat_sec: int
+
+
+class ScannerCommandResult(BaseModel):
+    """Отчёт устройства о выполнении команды."""
+    device_id: str
+    command_id: int
+    ok: bool
+    message: Optional[str] = None
+
+
+class ScannerCommandEntry(BaseModel):
+    """Команда в админской истории."""
+    id: int
+    command: str
+    payload: Optional[str] = None
+    status: str
+    created_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    result: Optional[str] = None
+    created_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ScannerDeviceOut(BaseModel):
+    """Полное состояние сканера для админской панели."""
+    device_id: str
+    name: Optional[str] = None
+    status: str                       # online | sleeping | offline | never
+    status_label: str                 # человеческая расшифровка
+    seconds_since_seen: Optional[int] = None
+    last_seen_at: Optional[datetime] = None
+    first_seen_at: Optional[datetime] = None
+    last_mode: Optional[str] = None
+    fw_version: Optional[str] = None
+    ip_address: Optional[str] = None
+    ssid: Optional[str] = None
+    rssi: Optional[int] = None
+    wifi_quality: Optional[int] = None   # 0..100, пересчёт из dBm для шкалы
+    battery_percent: Optional[int] = None
+    battery_voltage: Optional[float] = None
+    queue_size: Optional[int] = None
+    free_heap: Optional[int] = None
+    uptime_sec: Optional[int] = None
+    reset_reason: Optional[str] = None
+    time_synced: Optional[bool] = None
+    config: dict = {}
+    config_version: int = 1
+    pending_commands: int = 0
+    alerts: List[str] = []            # готовые тексты проблем для плашки
+    target_firmware_id: Optional[int] = None
+    firmware_up_to_date: Optional[bool] = None
+    last_ota_error: Optional[str] = None
+
+
+class ScannerCommandRequest(BaseModel):
+    """Админ ставит команду в очередь."""
+    command: str
+    payload: Optional[dict] = None
+
+
+class ScannerConfigUpdate(BaseModel):
+    """Настройки сканера. Всё опционально — меняем только присланное."""
+    heartbeat_sec: Optional[int] = None
+    sleep_enabled: Optional[bool] = None
+    work_start: Optional[str] = None       # "06:00"
+    work_end: Optional[str] = None         # "19:30"
+    work_days: Optional[List[int]] = None  # 1=Пн .. 7=Вс
+    night_checkin_min: Optional[int] = None
+    volume_percent: Optional[int] = None
+    led_brightness: Optional[int] = None
+    debounce_sec: Optional[int] = None
+    no_sleep_until: Optional[datetime] = None
+
+
+class ScannerHistoryPoint(BaseModel):
+    """Точка на графике состояния."""
+    at: datetime
+    mode: Optional[str] = None
+    rssi: Optional[int] = None
+    battery_percent: Optional[int] = None
+    queue_size: Optional[int] = None
+    free_heap: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ScannerFirmwareEntry(BaseModel):
+    """Загруженная сборка прошивки."""
+    id: int
+    version: str
+    filename: Optional[str] = None
+    size_bytes: int
+    md5: str
+    notes: Optional[str] = None
+    uploaded_at: Optional[datetime] = None
+    uploaded_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
