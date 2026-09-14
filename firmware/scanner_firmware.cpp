@@ -11,6 +11,7 @@
 #include <time.h> 
 #include <map> 
 #include <driver/i2s_std.h>
+#include <driver/gpio.h>
 #include <math.h>
 #include <WiFiManager.h> 
 #include <esp_sleep.h> 
@@ -26,7 +27,7 @@
 // Версия прошивки. Её же указывают при загрузке .bin в админке: сервер сравнивает
 // её с тем, что пришло в heartbeat, и так понимает, доехало обновление или нет.
 // Меняете прошивку — поднимайте версию, иначе обновление будет крутиться по кругу.
-#define FW_VERSION "2.6.0"
+#define FW_VERSION "2.7.0"
 
 #define CTRL_PIN 17 
 #define BATT_PIN 4 
@@ -794,7 +795,32 @@ void deepSleepFor(long seconds, bool touchPeripherals) {
     FastLED.clear(); FastLED.show();
     digitalWrite(CTRL_PIN, LOW);
     tft.enableDisplay(false);
+
+    // Забираем линии I2S у драйвера и кладём в ноль. Молчащий канал этого не
+    // делает: он останавливает такты, но разводку оставляет за собой, а в
+    // глубоком сне пады отпускаются в воздух. Усилитель начинает ловить
+    // наводки вместо тактов — это и есть треск при засыпании. Ноль на входах
+    // безопасен и для обесточенного усилителя, а без тактов он сам уходит в
+    // спящий режим.
+    pinMode(I2S_BCLK, OUTPUT); digitalWrite(I2S_BCLK, LOW);
+    pinMode(I2S_LRC,  OUTPUT); digitalWrite(I2S_LRC,  LOW);
+    pinMode(I2S_DOUT, OUTPUT); digitalWrite(I2S_DOUT, LOW);
+
+    // Защёлка. Без неё digitalWrite() перед сном бесполезен: уровень держится
+    // ровно до esp_deep_sleep_start(), дальше пин отпускается. Снимается в
+    // setup() при полном пробуждении.
+    gpio_hold_en((gpio_num_t)CTRL_PIN);
+    gpio_hold_en((gpio_num_t)I2S_BCLK);
+    gpio_hold_en((gpio_num_t)I2S_LRC);
+    gpio_hold_en((gpio_num_t)I2S_DOUT);
   }
+
+  // Ночному пробуждению защёлка нужна не меньше: экран, лента и звук там не
+  // поднимаются, пины никто не выставляет, и отпущенные они трещали бы всю
+  // ночь. Поэтому включаем удержание на время сна в обеих ветках — при
+  // коротком выходе на связь оно просто продолжает стоять с прошлого раза.
+  gpio_deep_sleep_hold_en();
+
   WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   esp_deep_sleep_start();
@@ -1173,8 +1199,18 @@ void setup() {
   // Обновление доехало — забываем прошлую ошибку OTA, она уже неактуальна.
   if (strcmp(rtcOtaVersion, FW_VERSION) == 0) { rtcOtaError[0] = '\0'; rtcOtaFails = 0; }
 
+  // Снимаем защёлку, поставленную перед сном: пока она стоит, pinMode() и
+  // digitalWrite() по этим пинам не проходят и периферия не включится. Место
+  // выбрано после ночной ветки: та из setup() не возвращается, и защёлка ей
+  // нужна — иначе усилитель затрещит на каждом ночном выходе на связь.
+  gpio_hold_dis((gpio_num_t)CTRL_PIN);
+  gpio_hold_dis((gpio_num_t)I2S_BCLK);
+  gpio_hold_dis((gpio_num_t)I2S_LRC);
+  gpio_hold_dis((gpio_num_t)I2S_DOUT);
+  gpio_deep_sleep_hold_dis();
+
   pinMode(CTRL_PIN, OUTPUT); digitalWrite(CTRL_PIN, HIGH); delay(50);
-  rfidBuffer.reserve(32); 
+  rfidBuffer.reserve(32);
   pinMode(BTN_UP, INPUT_PULLUP); pinMode(BTN_DOWN, INPUT_PULLUP);
   pinMode(BTN_OK, INPUT_PULLUP); pinMode(BATT_PIN, INPUT);
 
