@@ -26,7 +26,7 @@
 // Версия прошивки. Её же указывают при загрузке .bin в админке: сервер сравнивает
 // её с тем, что пришло в heartbeat, и так понимает, доехало обновление или нет.
 // Меняете прошивку — поднимайте версию, иначе обновление будет крутиться по кругу.
-#define FW_VERSION "2.5.0"
+#define FW_VERSION "2.6.0"
 
 #define CTRL_PIN 17 
 #define BATT_PIN 4 
@@ -253,8 +253,29 @@ const int16_t sineTable[64] = {
 
 i2s_chan_handle_t tx_chan;
 
+// Кольцо DMA: 8 буферов по 240 кадров = 1920 кадров, то есть 120 мс звука при
+// 16 кГц. Столько может длиться пауза, пока loop() вытеснили задачи Wi-Fi, —
+// если писать реже, DMA останется без данных и повторит последний кусок.
+#define I2S_DESC_NUM    8
+#define I2S_FRAME_NUM   240
+#define I2S_RING_FRAMES (I2S_DESC_NUM * I2S_FRAME_NUM)
+
+// Кадры готовим пачками, а не по одному: раньше на каждые 4 байта приходился
+// свой вызов i2s_channel_write() с захватом мьютекса драйвера — 16 тысяч раз
+// в секунду. Любая заминка на этом фоне оборачивалась опустошением буфера.
+static uint32_t audioChunk[256];
+#define AUDIO_CHUNK_FRAMES ((int)(sizeof(audioChunk) / sizeof(audioChunk[0])))
+
+// Звук трогают два ядра: обычно loop(), но beepError() при неудачном
+// обновлении зовут из фоновой задачи. Пусть канал принадлежит одному из них.
+SemaphoreHandle_t audioMutex = NULL;
+
 void initI2S() {
+  audioMutex = xSemaphoreCreateMutex();
+
   i2s_chan_config_t tx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+  tx_chan_cfg.dma_desc_num  = I2S_DESC_NUM;
+  tx_chan_cfg.dma_frame_num = I2S_FRAME_NUM;
   i2s_new_channel(&tx_chan_cfg, &tx_chan, NULL);
   i2s_std_config_t tx_std_cfg = {
     .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
@@ -266,28 +287,81 @@ void initI2S() {
     },
   };
   i2s_channel_init_std_mode(tx_chan, &tx_std_cfg);
-  i2s_channel_enable(tx_chan);
+  // Канал сознательно оставлен выключенным. Пока он включён, BCLK и LRC тикают
+  // непрерывно, усилитель держит выход открытым и усиливает всё, что наводится
+  // от ленты, экрана и Wi-Fi, — отсюда фоновое шипение и треск на ровном месте.
+  // Включаем только на время звука, см. audioBegin() / audioEnd().
+}
+
+// Одна пачка кадров в канал. Таймаут конечный: если канал почему-то встал,
+// проигрывание оборвётся, а не подвесит задачу под сторожевым таймером.
+// Последний аргумент i2s_channel_write() — миллисекунды, а не тики.
+static bool writeFrames(const uint32_t* frames, int count) {
+  size_t written = 0;
+  size_t bytes = (size_t)count * sizeof(uint32_t);
+  esp_err_t err = i2s_channel_write(tx_chan, frames, bytes, &written, 1000);
+  return (err == ESP_OK && written == bytes);
+}
+
+static bool writeSilence(int frames) {
+  memset(audioChunk, 0, sizeof(audioChunk));
+  while (frames > 0) {
+    int n = (frames < AUDIO_CHUNK_FRAMES) ? frames : AUDIO_CHUNK_FRAMES;
+    if (!writeFrames(audioChunk, n)) return false;
+    frames -= n;
+  }
+  return true;
+}
+
+// Поднимает канал под один звук. Всё, что играет, обязано начинаться этим
+// вызовом и заканчиваться audioEnd() — иначе канал останется включённым.
+static bool audioBegin() {
+  if (!peripheralsReady || audioMutex == NULL) return false;
+  if (xSemaphoreTake(audioMutex, pdMS_TO_TICKS(2000)) != pdTRUE) return false;
+  if (i2s_channel_enable(tx_chan) != ESP_OK) {
+    xSemaphoreGive(audioMutex);
+    return false;
+  }
+  return true;
+}
+
+// Досылаем полное кольцо нулей и гасим канал. Пока эти нули копируются, DMA
+// обязан освободить все буферы — значит, последний кадр звука уже ушёл в
+// усилитель и выключение ничего не обрежет. Заодно в кольце остаются нули:
+// следующее включение начнётся с тишины, а не с обрывка прошлого звука.
+static void audioEnd() {
+  writeSilence(I2S_RING_FRAMES + I2S_FRAME_NUM);
+  i2s_channel_disable(tx_chan);
+  xSemaphoreGive(audioMutex);
+}
+
+// Синус заданной длины в уже поднятый канал. Фазу держим в пределах таблицы:
+// у длинной ноты незавёрнутый аккумулятор терял точность и уводил тон.
+static bool renderTone(float frequency, int total_frames) {
+  if (frequency <= 0 || total_frames <= 0) return true;
+
+  float phaseIncrement = (64.0 * frequency) / SAMPLE_RATE;
+  float phase = 0.0;
+  int done = 0;
+  while (done < total_frames) {
+    int n = total_frames - done;
+    if (n > AUDIO_CHUNK_FRAMES) n = AUDIO_CHUNK_FRAMES;
+    for (int i = 0; i < n; i++) {
+      int16_t v = (int16_t)((currentVolume * sineTable[(int)phase & 63]) >> 15);
+      audioChunk[i] = ((uint32_t)(uint16_t)v << 16) | (uint16_t)v;
+      phase += phaseIncrement;
+      while (phase >= 64.0) phase -= 64.0;
+    }
+    if (!writeFrames(audioChunk, n)) return false;
+    done += n;
+  }
+  return true;
 }
 
 void playI2STone(float frequency, int duration_ms) {
-  size_t bytes_written;
-  if (!peripheralsReady) return;  // ночное пробуждение: I2S не инициализирован
-  int total_samples = (SAMPLE_RATE * duration_ms) / 1000;
-  int16_t sample_val = 0;
-  float phaseIncrement = (64.0 * frequency) / SAMPLE_RATE;
-  float phase = 0.0;
-
-  for (int i = 0; i < total_samples; i++) {
-    int tableIndex = (int)phase % 64;
-    sample_val = (int16_t)((currentVolume * sineTable[tableIndex]) >> 15);
-    uint32_t sample_32 = ((uint32_t)(uint16_t)sample_val << 16) | (uint16_t)sample_val;
-    i2s_channel_write(tx_chan, &sample_32, sizeof(sample_32), &bytes_written, portMAX_DELAY);
-    phase += phaseIncrement;
-  }
-  uint32_t silence = 0;
-  for (int i = 0; i < 4096; i++) {
-    i2s_channel_write(tx_chan, &silence, sizeof(silence), &bytes_written, portMAX_DELAY);
-  }
+  if (!audioBegin()) return;   // ночное пробуждение: I2S не инициализирован
+  renderTone(frequency, (SAMPLE_RATE * duration_ms) / 1000);
+  audioEnd();
 }
 
 // ========== ЗВУК УСПЕШНОЙ ОТМЕТКИ ==========
@@ -298,29 +372,16 @@ void playI2STone(float frequency, int duration_ms) {
 //   3 — мягкое, без резкого верха
 #define SUCCESS_SOUND 0
 
-// Нота без хвоста тишины. playI2STone() доливает в конце 4096 отсчётов тишины
-// (четверть секунды при 16 кГц) — для одиночного писка это незаметно, а в
-// мелодии между нотами повисали бы паузы и она рассыпалась бы на отдельные
-// писки. Длительность округляем вниз до целого числа периодов: тогда волна
-// обрывается в нуле и на стыке нот нет щелчка.
+// Нота мелодии. Канал должен быть уже поднят: ноты идут встык внутри одного
+// audioBegin() / audioEnd(), иначе между ними щёлкал бы усилитель, а мелодия
+// рассыпалась бы на отдельные писки. Длительность округляем вниз до целого
+// числа периодов: тогда волна обрывается в нуле и на стыке нот нет щелчка.
 void playNote(float frequency, int duration_ms) {
-  if (!peripheralsReady || frequency <= 0) return;
-
-  size_t bytes_written;
+  if (frequency <= 0) return;
   float samplesPerCycle = SAMPLE_RATE / frequency;
   int cycles = (int)(((SAMPLE_RATE * duration_ms) / 1000.0) / samplesPerCycle);
   if (cycles < 1) cycles = 1;
-  int total_samples = (int)(cycles * samplesPerCycle);
-
-  float phaseIncrement = (64.0 * frequency) / SAMPLE_RATE;
-  float phase = 0.0;
-  for (int i = 0; i < total_samples; i++) {
-    int tableIndex = (int)phase % 64;
-    int16_t sample_val = (int16_t)((currentVolume * sineTable[tableIndex]) >> 15);
-    uint32_t sample_32 = ((uint32_t)(uint16_t)sample_val << 16) | (uint16_t)sample_val;
-    i2s_channel_write(tx_chan, &sample_32, sizeof(sample_32), &bytes_written, portMAX_DELAY);
-    phase += phaseIncrement;
-  }
+  renderTone(frequency, (int)(cycles * samplesPerCycle));
 }
 
 // 1 — «Подтверждение». Восходящее арпеджио до-мажор с удержанием последней
@@ -356,32 +417,27 @@ const Note MELODY_SOFT[] = {
 // поэтому отсчёты уходят как есть, без пересчёта. Громкость — та же, что у
 // мелодий: значение из настроек панели.
 void playSample(const int16_t* data, int count) {
-  if (!peripheralsReady) return;
+  if (!audioBegin()) return;
 
-  size_t bytes_written;
-  for (int i = 0; i < count; i++) {
-    int16_t v = (int16_t)(((int32_t)data[i] * currentVolume) >> 15);
-    uint32_t sample_32 = ((uint32_t)(uint16_t)v << 16) | (uint16_t)v;
-    i2s_channel_write(tx_chan, &sample_32, sizeof(sample_32), &bytes_written, portMAX_DELAY);
+  int done = 0;
+  while (done < count) {
+    int n = count - done;
+    if (n > AUDIO_CHUNK_FRAMES) n = AUDIO_CHUNK_FRAMES;
+    for (int i = 0; i < n; i++) {
+      int16_t v = (int16_t)(((int32_t)data[done + i] * currentVolume) >> 15);
+      audioChunk[i] = ((uint32_t)(uint16_t)v << 16) | (uint16_t)v;
+    }
+    if (!writeFrames(audioChunk, n)) break;
+    done += n;
   }
 
-  uint32_t silence = 0;
-  for (int i = 0; i < 2048; i++) {
-    i2s_channel_write(tx_chan, &silence, sizeof(silence), &bytes_written, portMAX_DELAY);
-  }
+  audioEnd();
 }
 
 void playMelody(const Note* notes, int count) {
-  if (!peripheralsReady) return;
+  if (!audioBegin()) return;
   for (int i = 0; i < count; i++) playNote(notes[i].freq, notes[i].ms);
-
-  // Хвост тишины один на всю мелодию: дочищаем буфер I2S, чтобы усилитель не
-  // щёлкнул на обрыве.
-  size_t bytes_written;
-  uint32_t silence = 0;
-  for (int i = 0; i < 2048; i++) {
-    i2s_channel_write(tx_chan, &silence, sizeof(silence), &bytes_written, portMAX_DELAY);
-  }
+  audioEnd();
 }
 
 void beepSuccess() {
@@ -395,8 +451,16 @@ void beepSuccess() {
   playSample(SOUND_BARK, SOUND_BARK_LEN);
 #endif
 }
-void beepError() { playI2STone(500.0, 150); vTaskDelay(200 / portTICK_PERIOD_MS); playI2STone(500.0, 150); }
-void beepNav() { playI2STone(1000.0, 50); } 
+// Пауза между писками — это записанная тишина, а не vTaskDelay(): бросить
+// включённый канал без данных на 200 мс значит опустошить буфер DMA.
+void beepError() {
+  if (!audioBegin()) return;
+  renderTone(500.0, (SAMPLE_RATE * 150) / 1000);
+  writeSilence((SAMPLE_RATE * 200) / 1000);
+  renderTone(500.0, (SAMPLE_RATE * 150) / 1000);
+  audioEnd();
+}
+void beepNav() { playI2STone(1000.0, 50); }
 
 void updateBatteryStatus() {
   if (millis() - lastBattCheck > 5000) { 
