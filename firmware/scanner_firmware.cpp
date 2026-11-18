@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
@@ -20,6 +21,7 @@
 #include <ArduinoJson.h>
 #include <esp_system.h>
 #include <vector>
+#include <algorithm>
 #include "sound_bark.h"
 #include "sound_privet.h"
 #include "sound_bay.h"
@@ -27,7 +29,7 @@
 // Версия прошивки. Её же указывают при загрузке .bin в админке: сервер сравнивает
 // её с тем, что пришло в heartbeat, и так понимает, доехало обновление или нет.
 // Меняете прошивку — поднимайте версию, иначе обновление будет крутиться по кругу.
-#define FW_VERSION "2.7.1"
+#define FW_VERSION "2.8.0"
 
 #define CTRL_PIN 17 
 #define BATT_PIN 4 
@@ -132,6 +134,12 @@ volatile bool forceFlushQueue = false;
 // Команда identify: пищать и мигать должен loop() — он владеет экраном, звуком
 // и лентой. Дёргать их из фоновой задачи значит драться за SPI и I2S.
 volatile bool identifyRequested = false;
+// Смена Wi-Fi из CRM (18.11.2026): команда только запоминает, что просили, а переключается
+// SyncTask — после обмена с сервером, под мьютексом сети и с поглаживанием сторожа.
+volatile bool wifiSwitchPending = false;
+int  wifiSwitchCmdId = 0;
+char wifiSwitchSsid[33] = {0};
+char wifiSwitchPass[65] = {0};
 // Мелодия успеха играется блокирующе почти секунду. Если запускать её прямо в
 // обработчике карты, человек сначала слушает музыку и только потом видит
 // зелёный экран. Поэтому ставим флаг, а играем после отрисовки.
@@ -192,7 +200,9 @@ void saveConfig();
 void applyConfig();
 bool sendHeartbeat(const char* mode);
 void reportCommandResult(int id, bool ok, const char* msg);
-void executeCommand(int id, const char* command);
+int postCommandResult(int id, bool ok, const char* msg);
+void executeCommand(int id, const char* command, JsonObject payload);
+void runWifiSwitch();
 void doPullOta(const char* version, const char* path);
 bool shouldBeAwake(const struct tm& t);
 long secondsUntilWorkStart(const struct tm& t);
@@ -856,7 +866,12 @@ void checkAndGoToSleep() {
 // ========== СВЯЗЬ С СЕРВЕРОМ ==========
 
 void reportCommandResult(int id, bool ok, const char* msg) {
-  if (id <= 0 || WiFi.status() != WL_CONNECTED) return;
+  postCommandResult(id, ok, msg);
+}
+
+// То же, но с ответом сервера: смена Wi-Fi проверяет им, что новая сеть пускает к серверу.
+int postCommandResult(int id, bool ok, const char* msg) {
+  if (id <= 0 || WiFi.status() != WL_CONNECTED) return -1;
 
   JsonDocument doc;
   doc["device_id"]  = DEVICE_ID;
@@ -871,11 +886,12 @@ void reportCommandResult(int id, bool ok, const char* msg) {
   http.setTimeout(8000);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Key", DEVICE_KEY);
-  http.POST(body);
+  int code = http.POST(body);
   http.end();
+  return code;
 }
 
-void executeCommand(int id, const char* command) {
+void executeCommand(int id, const char* command, JsonObject payload) {
   String c = command;
   Serial.printf("[КОМАНДА] %s (#%d)\n", command, id);
 
@@ -925,7 +941,136 @@ void executeCommand(int id, const char* command) {
     return;
   }
 
+  if (c == "scan_wifi") {
+    // Сети вокруг сканера — чтобы в CRM выбирать из списка, а не набирать имя на память.
+    // Самые сильные первыми, одно имя — один раз (у меш-систем точек с одним именем много).
+    esp_task_wdt_reset();
+    int n = WiFi.scanNetworks(false, false);
+    esp_task_wdt_reset();
+    if (n < 0) { reportCommandResult(id, false, "Не вдалося знайти мережі"); return; }
+    std::vector<int> order;
+    for (int i = 0; i < n; i++) order.push_back(i);
+    std::sort(order.begin(), order.end(), [](int a, int b) { return WiFi.RSSI(a) > WiFi.RSSI(b); });
+    JsonDocument out;
+    JsonArray list = out.to<JsonArray>();
+    std::vector<String> seen;
+    for (int k = 0; k < (int)order.size() && list.size() < 15; k++) {
+      int i = order[k];
+      String name = WiFi.SSID(i);
+      if (name.length() == 0) continue;
+      bool dup = false;
+      for (const String& x : seen) if (x == name) { dup = true; break; }
+      if (dup) continue;
+      seen.push_back(name);
+      JsonArray row = list.add<JsonArray>();
+      row.add(name);
+      row.add((int)WiFi.RSSI(i));
+      row.add(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? 1 : 0);
+    }
+    WiFi.scanDelete();
+    String msg; serializeJson(out, msg);
+    reportCommandResult(id, true, msg.c_str());
+    return;
+  }
+
+  if (c == "set_wifi") {
+    const char* ssid = payload["ssid"] | "";
+    const char* pass = payload["password"] | "";
+    size_t sl = strlen(ssid), pl = strlen(pass);
+    if (sl == 0 || sl > 32) { reportCommandResult(id, false, "Назва мережі — від 1 до 32 символів"); return; }
+    if (pl != 0 && (pl < 8 || pl > 63)) { reportCommandResult(id, false, "Пароль Wi-Fi — від 8 до 63 символів"); return; }
+    strlcpy(wifiSwitchSsid, ssid, sizeof(wifiSwitchSsid));
+    strlcpy(wifiSwitchPass, pass, sizeof(wifiSwitchPass));
+    wifiSwitchCmdId = id;
+    wifiSwitchPending = true;   // переключит SyncTask после этого обмена — отчёт придёт оттуда
+    return;
+  }
+
   reportCommandResult(id, false, "Команда не поддерживается этой прошивкой");
+}
+
+// Переход на другую сеть по команде из CRM. Главное — не остаться без связи: новая сеть
+// должна и подключиться, и пустить к серверу (отчёт о команде и есть проверка). Не вышло —
+// возвращаемся к прежней, и CRM узнаёт почему. Сеть запоминается в памяти Wi-Fi (NVS), как
+// после портала HARIZMA_SETUP, и переживает перезагрузку.
+static bool waitWifiConnected(uint32_t ms) {
+  uint32_t start = millis();
+  while (millis() - start < ms) {
+    if (WiFi.status() == WL_CONNECTED) return true;
+    esp_task_wdt_reset();
+    delay(200);
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void runWifiSwitch() {
+  if (!wifiSwitchPending) return;
+  wifiSwitchPending = false;
+  int id = wifiSwitchCmdId;
+  char newSsid[33]; char newPass[65];
+  strlcpy(newSsid, wifiSwitchSsid, sizeof(newSsid));
+  strlcpy(newPass, wifiSwitchPass, sizeof(newPass));
+  memset(wifiSwitchPass, 0, sizeof(wifiSwitchPass));
+
+  if (netMutex && xSemaphoreTake(netMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+    reportCommandResult(id, false, "Мережа зайнята — спробуйте ще раз");
+    return;
+  }
+
+  // Прежняя сеть — из памяти Wi-Fi, ровно как она записана: к ней и вернёмся.
+  wifi_config_t oldConf; memset(&oldConf, 0, sizeof(oldConf));
+  esp_wifi_get_config(WIFI_IF_STA, &oldConf);
+  char oldSsid[33] = {0}; char oldPass[65] = {0};
+  memcpy(oldSsid, oldConf.sta.ssid, 32);
+  memcpy(oldPass, oldConf.sta.password, 64);
+
+  Serial.printf("[WIFI] Переход на «%s»\n", newSsid);
+  esp_task_wdt_reset();
+  WiFi.disconnect(false, false);
+  delay(300);
+  WiFi.begin(newSsid, strlen(newPass) ? newPass : nullptr);
+  bool joined = waitWifiConnected(20000);
+
+  bool reached = false;
+  if (joined) {
+    char msg[200];
+    snprintf(msg, sizeof(msg), "Підключився до «%s», сигнал %d дБм", newSsid, (int)WiFi.RSSI());
+    // Адрес и маршрут подтягиваются не мгновенно — три попытки.
+    for (int i = 0; i < 3 && !reached; i++) {
+      esp_task_wdt_reset();
+      reached = postCommandResult(id, true, msg) == 200;
+      if (!reached) { esp_task_wdt_reset(); delay(2000); }
+    }
+  }
+  if (reached) {
+    if (netMutex) xSemaphoreGive(netMutex);
+    return;
+  }
+
+  Serial.println("[WIFI] Новая сеть не подошла — возвращаюсь");
+  esp_task_wdt_reset();
+  WiFi.disconnect(false, false);
+  delay(300);
+  WiFi.begin(oldSsid, strlen(oldPass) ? oldPass : nullptr);
+  bool back = waitWifiConnected(20000);
+  if (netMutex) xSemaphoreGive(netMutex);
+
+  char msg[300];
+  if (!joined) {
+    snprintf(msg, sizeof(msg), "Не вдалося підключитися до «%s» (пароль або мережі не видно) — повернувся до «%s»", newSsid, oldSsid);
+  } else {
+    snprintf(msg, sizeof(msg), "«%s» підключилась, але без зв'язку з сервером — повернувся до «%s»", newSsid, oldSsid);
+  }
+  if (back) {
+    for (int i = 0; i < 3; i++) {
+      esp_task_wdt_reset();
+      if (postCommandResult(id, false, msg) == 200) break;
+      esp_task_wdt_reset();
+      delay(2000);
+    }
+  }
+  // Не вернулись и к прежней — Wi-Fi сам продолжит стучаться в неё (она записана заново),
+  // а команда в CRM истечёт с пометкой «пристрій не звітував».
 }
 
 // Скачивает и ставит прошивку с сервера. В отличие от ArduinoOTA работает из
@@ -1076,7 +1221,7 @@ bool heartbeatExchange(const char* mode) {
   }
 
   for (JsonVariant item : resp["commands"].as<JsonArray>()) {
-    executeCommand(item["id"] | 0, item["command"] | "");
+    executeCommand(item["id"] | 0, item["command"] | "", item["payload"].as<JsonObject>());
   }
   return true;
 }
@@ -1145,6 +1290,7 @@ void nightCheckinRoutine() {
     processOfflineBuffer();          // накопленное за ночь уйдёт сразу
     esp_task_wdt_reset();
     sendHeartbeat("night");          // здесь же выполнятся команды и обновление
+    runWifiSwitch();                 // смена сети из CRM — после обмена, как и днём
   }
 
   // Команда могла снять расписание или включить режим обслуживания — тогда
@@ -1408,6 +1554,9 @@ void syncTaskCode(void * pvParameters) {
         sendHeartbeat("active");
       }
     }
+
+    // Смена сети из CRM: команда пришла с heartbeat, переключаемся уже вне обмена.
+    if (wifiSwitchPending) runWifiSwitch();
   }
 }
 
